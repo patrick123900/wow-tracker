@@ -246,11 +246,17 @@ local function initDB()
 	FT.db = db
 end
 
+-- Other files hook into each refresh with FT.OnRefresh(fn(recording)).
+local refreshers = {}
+function FT.OnRefresh(fn) refreshers[#refreshers + 1] = fn end
+
 -- Refreshes the cached snapshot. Runs every TICK seconds, so the file holds
 -- the last good state whenever the client decides to write it.
 local function refresh()
 	if not db then return end
-	if not FT.IsRecording() then
+	local recording = FT.IsRecording()
+	for _, fn in ipairs(refreshers) do fn(recording) end
+	if not recording then
 		db.snapshot = nil
 		db.quests = nil
 		FT.current = nil
@@ -303,6 +309,7 @@ end
 function handlers.PLAYER_ENTERING_WORLD(isInitialLogin, isReload)
 	leaving = false
 	FT.questsDirty = true
+	if FT.MarkCharacterDirty then FT.MarkCharacterDirty() end
 	-- Zone text isn't ready on the first frame of a login.
 	C_Timer.After(2, function()
 		lastZone = lastZone or read("zone", GetRealZoneText)
@@ -413,6 +420,7 @@ function FT.Debug()
 	if FT.ReadQuestLog then
 		FT.Print(string.format("%d quests in log", #FT.ReadQuestLog()))
 	end
+	if FT.CharacterDebug then FT.CharacterDebug() end
 end
 
 function FT.StatusText()

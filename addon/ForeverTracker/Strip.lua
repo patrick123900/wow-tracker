@@ -14,7 +14,7 @@
 --   49-166 chunk bytes         167  health %   168  power %
 --   169-170 Fletcher-16 of bytes 0-168
 --
--- Messages (identity, zone, quest log, journal events) are JSON prefixed with
+-- Messages (identity, zone, quest log, gear, professions, journal events) are JSON prefixed with
 -- a type letter, split into chunks and shown one chunk per HOLD interval.
 -- Unreadable (secret) values have their valid bit cleared and are sent as 0.
 
@@ -73,10 +73,12 @@ local queue = {}       -- pending payload strings, sent in order
 local current          -- { id, data, index, count, shown }
 local nextID = 0
 local lastSent = {}    -- type -> time last queued
-local lastQuests
+local lastQuests, lastGear, lastProfessions
+local URGENT = { G = true, P = true } -- jump ahead of the (long) quest log
 
 local function enqueue(kind, payload)
 	local data = kind .. json(payload)
+	lastSent[kind] = GetTime()
 	-- Replace a not-yet-started message of the same kind instead of piling up.
 	for i, item in ipairs(queue) do
 		if item.kind == kind and kind ~= "E" then
@@ -84,8 +86,29 @@ local function enqueue(kind, payload)
 			return
 		end
 	end
-	queue[#queue + 1] = { kind = kind, data = data }
-	lastSent[kind] = GetTime()
+	local at = #queue + 1
+	if URGENT[kind] then
+		at = 1
+		while queue[at] and URGENT[queue[at].kind] do at = at + 1 end
+	end
+	table.insert(queue, at, { kind = kind, data = data })
+end
+
+-- Compact forms: arrays instead of objects keep these messages short.
+local function compactGear(items)
+	local out = {}
+	for i, it in ipairs(items) do
+		out[i] = { it.slot, it.id or 0, it.quality or -1, it.ilvl or 0, it.enchant or 0, it.suffix or 0, it.name or "" }
+	end
+	return out
+end
+
+local function compactProfessions(list)
+	local out = {}
+	for i, p in ipairs(list) do
+		out[i] = { p.name, p.rank or 0, p.max or 0, p.bonus or 0, p.secondary and 1 or 0 }
+	end
+	return out
 end
 
 local function identity()
@@ -112,6 +135,14 @@ local function schedule()
 	if FT.db.quests and (FT.questsVersion ~= lastQuests or not lastSent.Q or now - lastSent.Q > 60) then
 		lastQuests = FT.questsVersion
 		enqueue("Q", FT.db.quests)
+	end
+	if FT.db.gear and (FT.gearVersion ~= lastGear or not lastSent.G or now - lastSent.G > 60) then
+		lastGear = FT.gearVersion
+		enqueue("G", compactGear(FT.db.gear))
+	end
+	if FT.db.professions and (FT.professionsVersion ~= lastProfessions or not lastSent.P or now - lastSent.P > 60) then
+		lastProfessions = FT.professionsVersion
+		enqueue("P", compactProfessions(FT.db.professions))
 	end
 end
 

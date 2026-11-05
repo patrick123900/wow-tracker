@@ -39,7 +39,7 @@ SNAPSHOT_FIELDS = {
     "money", "guild", "dead", "ghost", "resting", "combat", "zone", "subzone",
     "mapID", "map", "x", "y", "vitalsAt", "vitalsAssumed",
 }
-EVENT_FIELDS = {"t", "type", "level", "zone", "subzone", "x", "y", "mapID",
+EVENT_FIELDS = {"t", "type", "level", "zone", "subzone", "x", "y", "mapID", "skill", "rank", "max", "learned",
                 "questID", "title", "xp", "money"}
 IDENTITY_FIELDS = {"name", "surname", "realm", "faction", "race", "class", "classToken", "sex", "guild", "maxLevel"}
 ZONE_FIELDS = {"zone", "subzone", "map"}
@@ -72,6 +72,34 @@ def clean_quests(quests):
             "failed": bool(q.get("failed")),
             "objectives": objectives,
         })
+    return out
+
+
+def _int(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _text(v, limit=100):
+    return v[:limit] if isinstance(v, str) and v else None
+
+
+def clean_gear(items):
+    """One item per equipment slot (1-19), expected fields only."""
+    out = {}
+    for it in items if isinstance(items, list) else []:
+        if isinstance(it, dict) and _int(it.get("slot")) in range(1, 20):
+            out[it["slot"]] = {"slot": it["slot"], "id": _int(it.get("id")), "name": _text(it.get("name")),
+                               "quality": _int(it.get("quality")), "ilvl": _int(it.get("ilvl")),
+                               "enchant": _int(it.get("enchant")), "suffix": _int(it.get("suffix"))}
+    return [out[k] for k in sorted(out)]
+
+
+def clean_professions(items):
+    out = []
+    for p in (items if isinstance(items, list) else [])[:12]:
+        if isinstance(p, dict) and _text(p.get("name")):
+            out.append({"name": _text(p["name"], 60), "rank": _int(p.get("rank")), "max": _int(p.get("max")),
+                        "bonus": _int(p.get("bonus")), "secondary": bool(p.get("secondary"))})
     return out
 
 
@@ -159,6 +187,7 @@ class Store:
         if "quests" in payload:
             self.put("quests", {"t": now, "list": clean_quests(payload["quests"])})
             history = True
+        history |= self.put_sheet(payload, now)
         if snap.get("name"):
             self.put("snapshot", snap)
             self.put("updatedAt", now)
@@ -238,6 +267,7 @@ class Store:
                     self.put("presence", {"online": online, "t": now})
                     if payload.get("quests") is not None:
                         self.put("quests", {"t": now, "list": clean_quests(payload["quests"])})
+                    self.put_sheet(payload, now)
                 history = True
                 self.add_events(payload.get("events"))
                 for p in payload.get("positions") or []:
@@ -253,6 +283,19 @@ class Store:
                 raise ValueError(f"unknown kind {kind!r}")
         self.notify(history)
 
+    def put_sheet(self, payload, now):
+        """Stores gear and professions; returns whether either changed."""
+        changed = False
+        for key, clean in (("gear", clean_gear), ("professions", clean_professions)):
+            if payload.get(key) is None:
+                continue
+            items = clean(payload[key])
+            old = self.get(key) or {}
+            if old.get("items") != items:
+                changed = True
+            self.put(key, {"t": now if old.get("items") != items else old.get("t", now), "items": items})
+        return changed
+
     def state(self, quests=True):
         with self.lock:
             presence = self.get("presence") or {"online": False, "t": 0}
@@ -260,6 +303,8 @@ class Store:
             updated = self.get("updatedAt")
             live_at = self.get("liveAt") or 0
             quest_state = self.get("quests") if quests else None
+            gear = self.get("gear") if quests else None
+            professions = self.get("professions") if quests else None
         now = int(time.time())
         online = presence["online"] and now - presence["t"] < PRESENCE_TIMEOUT
         state = {
@@ -272,6 +317,8 @@ class Store:
         }
         if quests:
             state["quests"] = quest_state
+            state["gear"] = gear
+            state["professions"] = professions
         return state
 
     def history(self, limit_positions=500, limit_events=150):

@@ -20,7 +20,7 @@ Blizzard's addon API has **no network or file access**. The addon reads everythi
    the screen. The companion reads those pixels from the WoW window ~20 times a second (X11/XWayland on Linux,
    screen grab elsewhere), decodes them and uploads once a second. The strip carries numbers (level, XP, health,
    power, gold, map position) in every frame, plus a chunked message channel for text: identity, zone, the quest
-   log, and journal events. Format: see the header of `addon/ForeverTracker/Strip.lua`.
+   log, equipped gear, professions and journal events. Format: see the header of `addon/ForeverTracker/Strip.lua`.
 2. **SavedVariables (on /reload, logout, exit).** It holds the full history (trail, XP samples, journal, quest
    log) and backfills anything the live channel missed, e.g. while the companion wasn't running.
 
@@ -56,8 +56,22 @@ Slash commands: `/ft sync | on | off | hide | show | ip <addr> | status | debug`
 
 Recorded: name, realm, race, class, level, XP, rested XP, health, power (mana/rage/energy), gold, guild,
 zone/subzone, map coordinates, and combat/resting/dead flags. It also keeps a position trail (sampled every 5 s
-when you move), XP samples, and a journal of level-ups, deaths, zone changes, quest turn-ins and logins. Each
-list is a capped ring buffer, so the file stays small.
+when you move), XP samples, and a journal of level-ups, deaths, zone changes, quest turn-ins, profession
+milestones and logins. Each list is a capped ring buffer, so the file stays small.
+
+**Gear** is read from every equipment slot (`GetInventoryItemLink`, item level, quality, enchant and random
+suffix) on `PLAYER_EQUIPMENT_CHANGED` / `UNIT_INVENTORY_CHANGED`, again a moment later, when late item info
+arrives, and every 20 s as a safety net. It's only sent when something changed (and re-sent every minute), ahead
+of the quest log in the strip's queue, so a swap shows on the site within about 2 seconds. Icons and the hover
+tooltips come from Wowhead's public item data; Forever-only items get a generic icon for their slot.
+
+**Professions** come from the skills pane (`GetSkillLineInfo`, the *Professions* and *Secondary Skills*
+sections), on `SKILL_LINES_CHANGED` / `CHAT_MSG_SKILL` and every 20 s. The journal gets an entry when you learn
+one, every 5 points and at the current cap. If a section is collapsed in the skills pane its entries can't be
+read; the last known list is kept until it's expanded again.
+
+The site's look (carved frames, parchment pages, the character pane for equipment) comes from Skyttehehe's
+fork, [Skyttehehe/wow-tracker](https://github.com/Skyttehehe/wow-tracker).
 
 ## Setup
 

@@ -207,6 +207,29 @@ def endpoint_url(endpoint):
     return f"http://{ip}:{int(m.group(2) or 8787)}/api/ingest"
 
 
+def rows(payload):
+    """The strip's compact lists; an empty one arrives as {}."""
+    return [r for r in payload if isinstance(r, list)] if isinstance(payload, list) else []
+
+
+def expand_gear(payload):
+    """[slot, id, quality, ilvl, enchant, suffix, name] -> item dicts."""
+    items = []
+    for r in rows(payload):
+        if len(r) >= 7:
+            slot, item_id, quality, ilvl, enchant, suffix, name = r[:7]
+            items.append({"slot": slot, "id": item_id or None, "quality": None if quality == -1 else quality,
+                          "ilvl": ilvl or None, "enchant": enchant or None, "suffix": suffix or None,
+                          "name": name or None})
+    return items
+
+
+def expand_professions(payload):
+    """[name, rank, max, bonus, secondary] -> profession dicts."""
+    return [{"name": r[0], "rank": r[1], "max": r[2], "bonus": r[3] or None, "secondary": bool(r[4])}
+            for r in rows(payload) if len(r) >= 5]
+
+
 def post(url, token, payload):
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, method="POST", headers={
@@ -246,6 +269,9 @@ class Companion:
         self.zone = None
         self.quests = None
         self.quests_dirty = False
+        self.gear = None
+        self.professions = None
+        self.sheet_dirty = False   # gear or professions changed
         self.events = []
         self.last_live_post = 0
         self.last_hidden_post = 0
@@ -276,6 +302,8 @@ class Companion:
             "positions": self.db.get("positions") or [],
             "xp": self.db.get("xp") or [],
             "quests": self.db.get("quests"),
+            "gear": self.db.get("gear"),
+            "professions": self.db.get("professions"),
         }
 
     def send(self, payload):
@@ -335,6 +363,14 @@ class Companion:
         elif kind == "Q":
             if payload != self.quests:
                 self.quests, self.quests_dirty = payload, True
+        elif kind == "G":
+            gear = expand_gear(payload)
+            if gear != self.gear:
+                self.gear, self.sheet_dirty = gear, True
+        elif kind == "P":
+            professions = expand_professions(payload)
+            if professions != self.professions:
+                self.professions, self.sheet_dirty = professions, True
         elif kind == "E":
             self.events.append(payload)
 
@@ -373,9 +409,15 @@ class Companion:
                 payload["identity"] = {**self.identity, "surname": surname}
         if self.quests_dirty:
             payload["quests"] = self.quests
+        if self.sheet_dirty:
+            if self.gear is not None:
+                payload["gear"] = self.gear
+            if self.professions is not None:
+                payload["professions"] = self.professions
         if self.send(payload):
             self.events = []
             self.quests_dirty = False
+            self.sheet_dirty = False
             self.last_heartbeat = now
 
     # --- main loop -----------------------------------------------------------

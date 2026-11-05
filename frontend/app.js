@@ -9,7 +9,7 @@ const POWER = {
   MANA: ["Mana", "var(--mana)"], RAGE: ["Rage", "var(--rage)"],
   ENERGY: ["Energy", "var(--energy)"], FOCUS: ["Focus", "var(--focus)"],
 };
-const EVENT_ICONS = { level: "★", death: "☠", zone: "⚑", quest: "✔", accept: "!", abandon: "✕", login: "⏻" };
+const EVENT_ICONS = { level: "★", death: "☠", zone: "⚑", quest: "✔", accept: "!", abandon: "✕", login: "⏻", skill: "⚒" };
 const FILTER_GROUPS = { quest: ["quest", "accept", "abandon"] };
 const SESSION_GAP = 15 * 60; // seconds; longer gaps count as a break
 const DEFAULT_MAP = { width: 1002, height: 668 };
@@ -106,7 +106,8 @@ function renderHero(s) {
   document.documentElement.style.setProperty("--class", color);
   const fullName = [s.name, s.surname].filter(Boolean).join(" ");
   document.title = `${fullName} · Forever Tracker`;
-  $("crest").textContent = (s.class || "?").charAt(0);
+  const portrait = racePortrait(s);
+  if (changed("crest", [portrait, s.class])) $("crest").innerHTML = portraitHtml(s);
   $("name").textContent = fullName;
   $("realm").textContent = [s.realm, s.faction].filter(Boolean).join(" · ") || "World of Warcraft: Forever";
   $("subtitle").textContent = [`Level ${s.level ?? "?"} ${s.race ?? ""} ${s.class ?? ""}`, s.guild && `<${s.guild}>`]
@@ -161,7 +162,8 @@ function renderProgress(s) {
   $("deaths").textContent = history.events.filter((e) => e.type === "death").length;
 }
 
-// Exact values when the game allows it, else its percentage, else "hidden".
+// Exact values when the game allows it, else its percentage. Returns false when
+// neither is known (the game keeps it secret); callers then hide the bar.
 function setBar(fill, text, cur, max, percent) {
   if (cur != null && max) {
     $(fill).style.width = `${pct(cur, max)}%`;
@@ -173,17 +175,17 @@ function setBar(fill, text, cur, max, percent) {
     $(text).textContent = max ? `${percent}% of ${fmt.format(max)}` : `${percent}%`;
     return true;
   }
-  $(fill).style.width = "0%";
-  $(text).innerHTML = `<span class="hidden-value">hidden</span>${max ? ` / ${fmt.format(max)}` : ""}`;
   return false;
 }
 
 function renderVitals(s) {
   const hp = setBar("hp-fill", "hp-text", s.health, s.healthMax, s.healthPct);
-  const p = s.power || {};
+  $("hp-fill").closest(".vital").hidden = !hp;
+  const p = shownPower(s.power);
   const [label, color] = POWER[p.type] || [p.type ? p.type[0] + p.type.slice(1).toLowerCase() : "Power", "var(--mana)"];
   $("power-name").textContent = label;
   const pw = setBar("power-fill", "power-text", p.cur, p.max, p.pct);
+  $("power-fill").closest(".vital").hidden = !pw;
   $("power-fill").style.setProperty("--power", color);
 
   const flags = [];
@@ -198,8 +200,8 @@ function renderVitals(s) {
     notes.push("Out of combat for a while, so health and mana are assumed to have regenerated to full.");
   } else if (s.vitalsAt) {
     notes.push(`From the game's combat log at your last combat action (${ago(s.vitalsAt)}).`);
-  } else if (!hp || !pw) {
-    notes.push("WoW Forever keeps current health and power secret from addons; only the maximum is shown.");
+  } else if (!hp && !pw) {
+    notes.push("Health and power show up once the game reports them, usually after the first fight.");
   }
   if (!state.live) notes.push("Shown as of the last update.");
   $("vitals-note").textContent = notes.join(" ");
@@ -394,6 +396,182 @@ function renderQuests() {
   list.innerHTML = html;
 }
 
+// --- equipment (laid out like the in-game character pane) -----------------------
+
+// Inventory slot ids per column of the character pane (4 = shirt, 19 = tabard).
+const PANE = {
+  left: [[1, "Head"], [2, "Neck"], [3, "Shoulder"], [15, "Back"], [5, "Chest"], [4, "Shirt"], [19, "Tabard"], [9, "Wrist"]],
+  right: [[10, "Hands"], [6, "Waist"], [7, "Legs"], [8, "Feet"], [11, "Finger"], [12, "Finger"], [13, "Trinket"], [14, "Trinket"]],
+  bottom: [[16, "Main hand"], [17, "Off hand"], [18, "Ranged"]],
+};
+const COSMETIC_SLOTS = new Set([4, 19]);
+const ICON_URL = (name) => `https://wow.zamimg.com/images/wow/icons/large/${name}.jpg`;
+const RACE_TOKENS = { "night elf": "nightelf", undead: "scourge", "blood elf": "bloodelf" };
+// For items Wowhead doesn't know (Forever-only items): a plain icon for the slot.
+const SLOT_ICONS = {
+  1: "inv_helmet_01", 2: "inv_jewelry_necklace_01", 3: "inv_shoulder_01", 15: "inv_misc_cape_01",
+  5: "inv_chest_cloth_01", 4: "inv_shirt_01", 19: "inv_shirt_guildtabard_01", 9: "inv_bracer_01",
+  10: "inv_gauntlets_01", 6: "inv_belt_01", 7: "inv_pants_01", 8: "inv_boots_01", 11: "inv_jewelry_ring_01",
+  12: "inv_jewelry_ring_01", 13: "inv_jewelry_talisman_01", 14: "inv_jewelry_talisman_01",
+  16: "inv_sword_01", 17: "inv_shield_01", 18: "inv_weapon_bow_01",
+};
+
+// The game counts rage in tenths (max 1000); its UI shows 0-100.
+function shownPower(p) {
+  if (p?.type === "RAGE" && p.max >= 1000) {
+    const tenth = (v) => (v == null ? v : Math.round(v / 10));
+    return { ...p, cur: tenth(p.cur), max: tenth(p.max) };
+  }
+  return p || {};
+}
+
+// Item id -> icon name, from Wowhead's public item data (Forever items match
+// Classic ids). Remembered in the browser so each item is looked up once.
+let icons = {};
+try { icons = JSON.parse(localStorage.getItem("ft-icons") || "{}"); } catch { /* private mode */ }
+const iconLookups = new Map();
+
+function itemIcon(id) {
+  if (!id) return Promise.resolve(null);
+  if (id in icons) return Promise.resolve(icons[id]);
+  if (!iconLookups.has(id)) {
+    iconLookups.set(id, fetch(`https://nether.wowhead.com/classic/tooltip/item/${id}`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d) => {
+        const name = /^[a-z0-9_]+$/i.test(d.icon || "") ? d.icon.toLowerCase() : null;
+        icons[id] = name;
+        try { localStorage.setItem("ft-icons", JSON.stringify(icons)); } catch { /* full or blocked */ }
+        return name;
+      })
+      .catch(() => null));
+  }
+  return iconLookups.get(id);
+}
+
+function racePortrait(s) {
+  const race = (s.race || "").toLowerCase();
+  const token = RACE_TOKENS[race] || race.replace(/[^a-z]/g, "");
+  return token ? ICON_URL(`race_${token}_${s.sex === 3 ? "female" : "male"}`) : null;
+}
+
+function portraitHtml(s) {
+  const portrait = racePortrait(s);
+  return `${portrait ? `<img src="${portrait}" alt="" onerror="this.remove()">` : ""}`
+    + `<span>${esc((s.class || "?").charAt(0))}</span>`;
+}
+
+function slotHtml([slot, label], it) {
+  if (!it) return `<span class="slot empty" title="${label}"><span>${label}</span></span>`;
+  const q = Number.isInteger(it.quality) ? Math.min(Math.max(it.quality, 0), 7) : 1;
+  const title = `${it.name || `Item ${it.id ?? ""}`}${it.ilvl ? ` · item level ${it.ilvl}` : ""}`;
+  // icons[id]: a name, null when Wowhead doesn't have the item, missing until looked up.
+  const known = it.id && icons[it.id];
+  const unknown = !it.id || icons[it.id] === null;
+  const img = known || unknown ? `<img src="${ICON_URL(known || SLOT_ICONS[slot])}" alt="" loading="lazy">` : "";
+  // Enchant and random suffix ("of the Bear") make Wowhead's tooltip match the real item.
+  const extra = [it.enchant && `ench=${it.enchant}`, it.suffix && `rand=${it.suffix}`].filter(Boolean).join("&");
+  return `<a class="slot q${q}" data-item="${it.id ?? ""}" title="${esc(title)}"
+      ${unknown ? "" : `href="https://www.wowhead.com/classic/item=${it.id}${extra ? `?${extra}` : ""}" target="_blank" rel="noopener"`}
+      ${extra ? `data-wowhead="${extra}"` : ""}>
+    ${img || `<span class="letter">${esc((it.name || "?").charAt(0))}</span>`}
+  </a>`;
+}
+
+// Only redraw what changed: a redraw under the mouse would close the item tooltip.
+const drawn = {};
+function changed(key, value) {
+  const v = JSON.stringify(value);
+  if (drawn[key] === v) return false;
+  drawn[key] = v;
+  return true;
+}
+
+function renderGear() {
+  const s = state?.snapshot || {};
+  const items = state?.gear?.items || [];
+  const bySlot = new Map(items.map((it) => [it.slot, it]));
+  if (changed("slots", items)) {
+    for (const [col, slots] of Object.entries(PANE)) {
+      $(`slots-${col}`).innerHTML = slots.map((def) => slotHtml(def, bySlot.get(def[0]))).join("");
+    }
+  }
+  // Fill in icons as their lookups come back.
+  for (const it of items) {
+    if (it.id && !(it.id in icons)) {
+      itemIcon(it.id).then((name) => {
+        const el = document.querySelector(`.slot[data-item="${it.id}"]`);
+        if (!el || el.querySelector("img")) return;
+        if (!name) el.removeAttribute("href");  // not on Wowhead: no tooltip to link to
+        el.innerHTML = `<img src="${ICON_URL(name || SLOT_ICONS[it.slot])}" alt="" loading="lazy">`;
+      });
+    }
+  }
+
+  if (changed("doll-portrait", [racePortrait(s), s.class])) $("doll-portrait").innerHTML = portraitHtml(s);
+  $("doll-title").innerHTML = s.level != null
+    ? `<b>Level ${s.level}</b> ${esc(s.race || "")} <span class="cls">${esc(s.class || "")}</span>` : "";
+
+  // Average item level over real gear slots; shirt and tabard don't count.
+  const levels = items.filter((it) => !COSMETIC_SLOTS.has(it.slot) && it.ilvl).map((it) => it.ilvl);
+  const avg = levels.length ? Math.round(levels.reduce((a, b) => a + b, 0) / levels.length) : null;
+  const p = shownPower(s.power);
+  const rows = [
+    ["Health", s.healthMax != null ? fmt.format(s.healthMax) : null],
+    [(POWER[p.type] || [p.type || "Power"])[0], p.max != null ? fmt.format(p.max) : null],
+    ["Item level", avg],
+    ["Equipped", `${items.filter((it) => !COSMETIC_SLOTS.has(it.slot)).length} / 17`],
+    ["Gold", s.money != null ? money(s.money) : null],
+  ].filter(([, v]) => v != null);
+  $("doll-stats").innerHTML = rows.map(([k, v]) => `<div><dt>${esc(k)}:</dt><dd>${v}</dd></div>`).join("");
+  $("gear-note").textContent = !items.length ? "No equipment received yet"
+    : state.gear.t ? `Changed ${ago(state.gear.t)} · hover an item` : "Hover an item for its tooltip";
+}
+
+// --- professions ---------------------------------------------------------------
+
+const PROF_ICONS = {
+  alchemy: "trade_alchemy", blacksmithing: "trade_blacksmithing", enchanting: "trade_engraving",
+  engineering: "trade_engineering", herbalism: "trade_herbalism", leatherworking: "trade_leatherworking",
+  mining: "trade_mining", skinning: "inv_misc_pelt_wolf_01", tailoring: "trade_tailoring",
+  jewelcrafting: "inv_misc_gem_01", inscription: "inv_inscription_tradeskill01",
+  cooking: "inv_misc_food_15", "first aid": "spell_holy_sealofsacrifice", fishing: "trade_fishing",
+};
+
+// The training tier a skill cap belongs to.
+function tier(max) {
+  return max <= 75 ? "Apprentice" : max <= 150 ? "Journeyman" : max <= 225 ? "Expert" : "Artisan";
+}
+
+function profHtml(p) {
+  const icon = PROF_ICONS[p.name.toLowerCase()];
+  const maxed = p.max && p.rank >= p.max;
+  return `<div class="prof">
+    <span class="prof-icon">${icon ? `<img src="${ICON_URL(icon)}" alt="" loading="lazy" onerror="this.remove()">` : ""}${icon ? "" : esc(p.name.charAt(0))}</span>
+    <div>
+      <div class="vital-label">
+        <span>${esc(p.name)}${p.max ? `<span class="tier">${tier(p.max)}</span>` : ""}</span>
+        <span>${p.rank ?? "–"}${p.bonus ? ` <span class="bonus">(+${p.bonus})</span>` : ""}${p.max ? ` / ${p.max}` : ""}</span>
+      </div>
+      <div class="bar skill${maxed ? " maxed" : ""}"><div class="fill" style="width:${p.max ? pct(p.rank, p.max) : 0}%"></div></div>
+    </div>
+  </div>`;
+}
+
+function renderProfessions() {
+  const list = state?.professions?.items;
+  if (!changed("professions", list ?? null)) return;
+  if (!list) {
+    $("prof-list").innerHTML = `<p class="empty">No professions received yet.</p>`;
+    $("prof-note").textContent = "";
+    return;
+  }
+  const primary = list.filter((p) => !p.secondary);
+  const secondary = list.filter((p) => p.secondary);
+  $("prof-note").textContent = `${primary.length} of 2 professions`;
+  $("prof-list").innerHTML = (primary.length ? primary.map(profHtml).join("") : `<p class="empty">No professions learned.</p>`)
+    + (secondary.length ? `<div class="prof-group">Secondary skills</div>${secondary.map(profHtml).join("")}` : "");
+}
+
 function describe(e) {
   switch (e.type) {
     case "level": return [`Reached level ${e.level}`, e.zone];
@@ -404,6 +582,8 @@ function describe(e) {
     case "accept": return [e.title || `Quest #${e.questID}`, "Accepted"];
     case "abandon": return [e.title || `Quest #${e.questID}`, "Abandoned"];
     case "login": return ["Logged in", [e.zone, e.level && `Level ${e.level}`].filter(Boolean).join(" · ")];
+    case "skill": return [e.learned ? `Learned ${e.skill}` : `${e.skill} reached ${e.rank}`,
+      e.max ? `${e.rank} / ${e.max} · ${tier(e.max)}` : ""];
     default: return [e.type, ""];
   }
 }
@@ -440,6 +620,8 @@ function renderLive() {
 function renderAll() {
   renderPresence();
   renderQuests();
+  renderGear();
+  renderProfessions();
   const s = state?.snapshot;
   if (!s) return;
   renderLive();
@@ -469,10 +651,11 @@ function connect() {
   const es = new EventSource("api/stream");
   es.addEventListener("update", load);
   es.addEventListener("live", (ev) => {
-    const quests = state?.quests;
+    const { quests, gear, professions } = state || {};
     state = JSON.parse(ev.data);
-    state.quests = quests;
+    Object.assign(state, { quests, gear, professions });
     renderLive();
+    renderGear();
   });
   // After a dropped connection, catch up on anything missed.
   es.addEventListener("open", load);

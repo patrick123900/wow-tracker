@@ -7,7 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%23d8b25a'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Alegreya:wght@500;700&family=Alegreya+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -84,12 +84,40 @@
       <p class="muted small" id="trail-note"></p>
     </section>
 
-    <section class="card quests">
+    <section class="card quests parchment">
       <div class="card-head">
         <h2>Quest log</h2>
         <span class="muted small" id="quest-count"></span>
       </div>
       <div class="quest-list" id="quest-list"></div>
+    </section>
+
+    <section class="card gear">
+      <div class="card-head">
+        <h2>Equipment</h2>
+        <span class="muted small" id="gear-note"></span>
+      </div>
+      <div class="paperdoll">
+        <div class="slots left" id="slots-left"></div>
+        <div class="doll">
+          <div class="doll-portrait" id="doll-portrait"></div>
+          <p class="doll-title" id="doll-title"></p>
+          <div class="statsheet">
+            <h3>General</h3>
+            <dl id="doll-stats"></dl>
+          </div>
+        </div>
+        <div class="slots right" id="slots-right"></div>
+        <div class="slots bottom" id="slots-bottom"></div>
+      </div>
+    </section>
+
+    <section class="card professions">
+      <div class="card-head">
+        <h2>Professions</h2>
+        <span class="muted small" id="prof-note"></span>
+      </div>
+      <div class="prof-list" id="prof-list"></div>
     </section>
 
     <section class="card timeline">
@@ -100,7 +128,7 @@
       </div>
     </section>
 
-    <section class="card journal">
+    <section class="card journal parchment">
       <div class="card-head">
         <h2>Journal</h2>
         <div class="chips" id="chips" role="group" aria-label="Filter journal">
@@ -108,6 +136,7 @@
           <button class="chip" data-filter="level">Levels</button>
           <button class="chip" data-filter="quest">Quests</button>
           <button class="chip" data-filter="zone">Zones</button>
+          <button class="chip" data-filter="skill">Professions</button>
           <button class="chip" data-filter="death">Deaths</button>
         </div>
       </div>
@@ -119,6 +148,11 @@
     Live data from an in-game addon. World map art © Blizzard Entertainment.
   </footer>
 </div>
+<script>
+  // Wowhead's tooltip script: hovering an item shows its in-game tooltip.
+  const whTooltips = { colorLinks: false, iconizeLinks: false, renameLinks: false };
+</script>
+<script src="https://wow.zamimg.com/js/tooltips.js" async></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -2,10 +2,11 @@
 ## Title: Forever Tracker
 ## Notes: Shares your character's progress with friends through the Forever Tracker companion app.
 ## Author: Patrick
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariables: ForeverTrackerDB
 
 Core.lua
 Quests.lua
+Character.lua
 Strip.lua
 Options.lua
