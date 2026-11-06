@@ -262,6 +262,8 @@ class Companion:
 
         self.live = cfg.get("live", True)
         self.capture = None
+        self.capture_failures = 0
+        self.capture_retry_at = 0
         self.reasm = strip.Reassembler()
         self.frame = None
         self.frame_at = 0
@@ -432,11 +434,16 @@ class Companion:
                 self.pending = None
                 self.last_heartbeat = now
 
-        if self.live:
+        if self.live and now >= self.capture_retry_at:
             try:
                 self.read_strip(now)
+                self.capture_failures = 0
             except Exception as exc:  # noqa: BLE001 - capture is best effort
-                log(f"strip capture failed: {exc}")
+                # Back off (up to 30 s) instead of retrying 20 times a second.
+                self.capture_failures += 1
+                self.capture_retry_at = now + min(30, 2 ** self.capture_failures)
+                if self.capture_failures <= 3 or self.capture_failures % 20 == 0:
+                    log(f"strip capture failed: {exc}")
                 self.capture = None
             if self.is_live(now):
                 self.post_live(now)

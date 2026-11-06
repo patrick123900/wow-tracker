@@ -1,6 +1,8 @@
 """Reads and decodes the ForeverTracker pixel strip (see addon Strip.lua)."""
 
 import json
+import os
+import subprocess
 import sys
 import time
 
@@ -176,8 +178,32 @@ class ScreenCapture:
         return cells_to_bytes([img.getpixel((i * CELL_PX + CELL_PX // 2, y)) for i in range(NUM_CELLS)])
 
 
+SESSION_VARS = ("DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY")
+
+
+def adopt_session_env():
+    """A user service started at boot can come up before the desktop session
+    has published DISPLAY. Take the session's values from systemd once they
+    exist, so capture works without restarting the companion."""
+    if os.environ.get("DISPLAY"):
+        return
+    try:
+        out = subprocess.run(["systemctl", "--user", "show-environment"], capture_output=True,
+                             text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return
+    for line in out.splitlines():
+        key, _, value = line.partition("=")
+        if key in SESSION_VARS and value and not os.environ.get(key):
+            os.environ[key] = value
+
+
 def make_capture():
     if sys.platform.startswith("linux"):
+        adopt_session_env()
+        if not os.environ.get("DISPLAY"):
+            # No desktop session yet; a screen grab can't work either.
+            raise RuntimeError("no display yet (desktop session not started)")
         try:
             return X11Capture()
         except Exception as exc:  # noqa: BLE001

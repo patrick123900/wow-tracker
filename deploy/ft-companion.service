@@ -3,6 +3,9 @@
 #          systemctl --user enable --now ft-companion
 [Unit]
 Description=Forever Tracker companion (SavedVariables uploader)
+# Start with the desktop session: reading the game window needs its DISPLAY.
+After=graphical-session.target
+PartOf=graphical-session.target
 
 [Service]
 ExecStart=/usr/bin/python3 %h/Projects/wow-tracker/companion/ft_companion.py
@@ -10,4 +13,4 @@ Restart=on-failure
 RestartSec=10
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
