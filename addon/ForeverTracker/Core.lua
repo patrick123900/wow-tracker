@@ -131,6 +131,7 @@ local function percent(name, fn, ...)
 	if type(v) ~= "number" then return nil end
 	return math.max(0, math.min(100, round(v)))
 end
+FT.Percent = percent
 
 local function powerInfo()
 	local ok, id, token = pcall(UnitPowerType, "player")

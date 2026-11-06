@@ -37,7 +37,7 @@ SNAPSHOT_FIELDS = {
     "t", "status", "name", "surname", "realm", "faction", "race", "class", "classToken", "sex",
     "level", "maxLevel", "xp", "xpMax", "rested", "health", "healthMax", "healthPct", "power",
     "money", "guild", "dead", "ghost", "resting", "combat", "zone", "subzone",
-    "mapID", "map", "x", "y", "vitalsAt", "vitalsAssumed",
+    "mapID", "map", "x", "y", "vitalsAt", "vitalsAssumed", "enemy",
 }
 EVENT_FIELDS = {"t", "type", "level", "zone", "subzone", "x", "y", "mapID", "skill", "rank", "max", "learned",
                 "questID", "title", "xp", "money"}
@@ -92,6 +92,20 @@ def clean_gear(items):
                                "quality": _int(it.get("quality")), "ilvl": _int(it.get("ilvl")),
                                "enchant": _int(it.get("enchant")), "suffix": _int(it.get("suffix"))}
     return [out[k] for k in sorted(out)]
+
+
+ENEMY_RANKS = {"elite", "rare", "rareelite", "worldboss"}
+
+
+def clean_enemy(e):
+    """What the player is fighting (a creature; never another player)."""
+    if not isinstance(e, dict) or not _text(e.get("name")):
+        return None
+    pct = _int(e.get("pct"))
+    return {"name": _text(e["name"], 60), "level": _int(e.get("level")), "health": _int(e.get("health")),
+            "healthMax": _int(e.get("healthMax")), "pct": pct if pct is not None and 0 <= pct <= 100 else None,
+            "rank": e.get("rank") if e.get("rank") in ENEMY_RANKS else None,
+            "targeted": bool(e.get("targeted")), "more": min(_int(e.get("more")) or 0, 40)}
 
 
 def clean_professions(items):
@@ -179,6 +193,7 @@ class Store:
                 snap["vitalsAt"] = vitals["t"]
         for k in ("dead", "ghost", "combat", "resting"):
             snap[k] = bool(flags.get(k))
+        snap["enemy"] = clean_enemy(payload.get("enemy")) if snap["combat"] else None
         self.assume_full(snap, now, frame)
         snap["status"] = "offline" if flags.get("leaving") else "online"
         snap["t"] = frame.get("t") or now

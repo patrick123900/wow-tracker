@@ -4,7 +4,8 @@ logging on) for the player's current health and power.
 The client writes an "advanced" block on most lines describing one unit:
     infoGUID, ownerGUID, currentHP, maxHP, attackPower, spellPower, armor,
     3 more fields, powerType, currentPower, maxPower, powerCost, x, y, ...
-Only lines whose unit is the player's own character are used; the log also
+Only lines about the player's own character are used, plus the health of
+creatures that are fighting the player (never other players); the log also
 contains everyone nearby, and none of that is passed on.
 """
 
@@ -20,6 +21,9 @@ MINE, PLAYER = 0x1, 0x400
 GUID = re.compile(r"^[A-Za-z]+-[0-9A-F]+(-[0-9A-F]+)*$")
 NO_OWNER = "0000000000000000"
 POWER_TYPES = {"0": "MANA", "1": "RAGE", "2": "FOCUS", "3": "ENERGY"}
+FOE_KINDS = ("Creature-", "Vehicle-")
+MAX_FOES = 20
+FOE_ACTIVE = 15     # seconds since its last line for a creature to count as still fighting
 BACKFILL = 64 * 1024  # bytes read from the end of a log when first opened
 IDENTITY_SCAN = 8 * 1024 * 1024  # bytes searched from the start for our own name
 
@@ -49,6 +53,8 @@ class CombatLogTail:
         self.full_name = None   # e.g. "Pattes-Heals-PvP-EU": first name, surname, realm
         self.surnames = {}      # first name -> surname, kept across log files
         self.vitals = None      # latest {"t", "health", "healthMax", "power": {...}}
+        # creature GUID -> {"name", "t" (last health), "fought" (last blow with us), "health", "healthMax", "dead"}
+        self.foes = {}
         self.next_check = 0
 
     def poll(self):
@@ -108,6 +114,42 @@ class CombatLogTail:
             self.surnames[first] = parts[1]
         return self.surnames.get(first)
 
+    def enemy(self, target=None):
+        """The creature to show as what you're fighting: the target when it's
+        in the log (Forever scrambles the GUIDs addons see, so it's matched by
+        name), else the one you most recently traded blows with. `more` counts
+        the other creatures still fighting you."""
+        now = time.time()
+        active = [f for f in self.foes.values() if not f["dead"] and now - f["fought"] <= FOE_ACTIVE]
+        pick = None
+        if target and target.get("name"):
+            named = [f for f in self.foes.values() if f["name"] == target["name"] and now - f["t"] <= 60]
+            # A dead match only counts when the target is dead too (not the previous kill).
+            named = [f for f in named if not f["dead"] or target.get("dead")]
+            pick = max(named, key=lambda f: f["t"], default=None)
+        if pick is None and active:
+            pick = max(active, key=lambda f: f["fought"])
+        if pick is None:
+            return None
+        return {"name": pick["name"], "health": 0 if pick["dead"] else pick["health"],
+                "healthMax": pick["healthMax"], "t": pick["t"],
+                "targeted": bool(target and target.get("name") == pick["name"]),
+                "more": len([f for f in active if f is not pick])}
+
+    def note_foe(self, guid, name, t, hp=None, hp_max=None, dead=False, fought=False):
+        foe = self.foes.pop(guid, None) or {"name": name, "t": t, "fought": t, "health": None,
+                                            "healthMax": None, "dead": False}
+        if fought:
+            foe["fought"] = max(foe["fought"], t)
+        if t >= foe["t"]:
+            foe["t"] = t
+            if hp_max:
+                foe["health"], foe["healthMax"] = hp, hp_max
+            foe["dead"] = dead or (foe["dead"] and hp is None)
+        self.foes[guid] = foe  # re-inserted: most recently seen last
+        while len(self.foes) > MAX_FOES:
+            self.foes.pop(next(iter(self.foes)))
+
     def parse(self, line):
         stamp, sep, body = line.partition("  ")
         if not sep:
@@ -128,8 +170,29 @@ class CombatLogTail:
                 self.me, self.full_name = fields[1], fields[2]
         if self.me is None:
             return
+        # A creature that died, or one on a line where it and we are source
+        # and target: something fighting us.
+        foe = None
+        if len(fields) > 6:
+            if fields[0] == "UNIT_DIED" and fields[5] in self.foes:
+                t = parse_time(stamp)
+                if t is not None:
+                    self.note_foe(fields[5], fields[6], t, dead=True)
+                return
+            if self.me in (fields[1], fields[5]):
+                other, name = (fields[5], fields[6]) if fields[1] == self.me else (fields[1], fields[2])
+                if other.startswith(FOE_KINDS):
+                    foe = other
+                    t = parse_time(stamp)
+                    if t is not None:
+                        self.note_foe(foe, name, t, fought=True)
         for i in range(1, len(fields) - 13):
-            if fields[i] != self.me or not (fields[i + 1] == NO_OWNER or GUID.match(fields[i + 1])):
+            # Our own lines, and any line describing a creature already fighting
+            # us (others' blows on it update its health too).
+            unit = fields[i]
+            if not (unit == self.me or unit == foe or unit in self.foes):
+                continue
+            if not (fields[i + 1] == NO_OWNER or GUID.match(fields[i + 1])):
                 continue
             try:
                 hp, hp_max = int(fields[i + 2]), int(fields[i + 3])
@@ -138,6 +201,9 @@ class CombatLogTail:
                 continue
             t = parse_time(stamp)
             if t is None or hp_max <= 0:
+                return
+            if unit != self.me:
+                self.note_foe(unit, self.foes[unit]["name"], t, hp, hp_max, dead=hp == 0)
                 return
             if self.vitals is None or t >= self.vitals["t"]:
                 self.vitals = {

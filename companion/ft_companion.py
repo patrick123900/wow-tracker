@@ -274,6 +274,7 @@ class Companion:
         self.gear = None
         self.professions = None
         self.sheet_dirty = False   # gear or professions changed
+        self.target = None         # attackable creature targeted in game, from the strip
         self.events = []
         self.last_live_post = 0
         self.last_hidden_post = 0
@@ -365,6 +366,8 @@ class Companion:
         elif kind == "Q":
             if payload != self.quests:
                 self.quests, self.quests_dirty = payload, True
+        elif kind == "T":
+            self.target = payload if isinstance(payload, dict) and payload.get("name") else None
         elif kind == "G":
             gear = expand_gear(payload)
             if gear != self.gear:
@@ -378,6 +381,22 @@ class Companion:
 
     def is_live(self, now):
         return self.frame is not None and now - self.frame_at < self.LIVE_STALE
+
+    def enemy(self, flags):
+        """What you're fighting, while in combat: health from the combat log;
+        level and rank when it's your target."""
+        if not flags.get("combat"):
+            return None
+        target = self.target
+        foe = self.combat_log.enemy(target)
+        if foe is None and target and not target.get("dead"):
+            # Targeted but not in the log yet (no blows traded): name only.
+            foe = {"name": target["name"], "health": None, "healthMax": None, "targeted": True, "more": 0}
+        if foe and foe["targeted"]:
+            foe.update(level=target.get("level"), rank=target.get("rank"))
+            if foe["health"] is None and target.get("pct") is not None:
+                foe["pct"] = target["pct"]
+        return foe
 
     def post_live(self, now):
         if now - self.last_live_post < self.LIVE_EVERY:
@@ -406,6 +425,7 @@ class Companion:
                 log(f"combat log read failed: {exc}")
             if self.combat_log.vitals:
                 payload["vitals"] = self.combat_log.vitals
+            payload["enemy"] = self.enemy(flags)
             surname = self.identity and self.combat_log.surname_for(self.identity.get("name"))
             if surname:
                 payload["identity"] = {**self.identity, "surname": surname}

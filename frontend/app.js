@@ -195,16 +195,34 @@ function renderVitals(s) {
   if (s.resting) flags.push(["resting", "Resting"]);
   $("flags").innerHTML = flags.map(([c, t]) => `<span class="flag ${c}">${t}</span>`).join("");
 
+  renderEnemy(s);
+  // Values assumed full after a while out of combat are shown without comment.
   const notes = [];
-  if (s.vitalsAssumed) {
-    notes.push("Out of combat for a while, so health and mana are assumed to have regenerated to full.");
-  } else if (s.vitalsAt) {
+  if (s.vitalsAt && !s.vitalsAssumed) {
     notes.push(`From the game's combat log at your last combat action (${ago(s.vitalsAt)}).`);
   } else if (!hp && !pw) {
     notes.push("Health and power show up once the game reports them, usually after the first fight.");
   }
   if (!state.live) notes.push("Shown as of the last update.");
   $("vitals-note").textContent = notes.join(" ");
+}
+
+const RANKS = { elite: "Elite", rare: "Rare", rareelite: "Rare elite", worldboss: "Boss" };
+
+// What you're fighting: your target, or the creature you last traded blows
+// with. Health from the game's combat log; shown only while in combat.
+function renderEnemy(s) {
+  const e = s.enemy;
+  $("enemy").hidden = !(e && s.combat);
+  if ($("enemy").hidden) return;
+  const level = e.level === -1 ? "??" : e.level;
+  $("enemy-who").innerHTML = `Fighting <span class="who">${esc(e.name)}</span>`
+    + `${level != null ? ` · Lv ${level}` : ""}${e.rank ? `<span class="rank">${RANKS[e.rank]}</span>` : ""}`
+    + `${e.more ? `<span class="more">+${e.more} more</span>` : ""}`;
+  // No health yet (no blows traded): just the name line.
+  const known = setBar("enemy-fill", "enemy-text", e.health, e.healthMax, e.pct);
+  $("enemy-fill").parentElement.hidden = !known;
+  $("enemy-text").hidden = !known;
 }
 
 function setMapArt(mapID) {
@@ -259,14 +277,11 @@ function renderTrail(s) {
       g.append(c);
     }
   }
-  $("trail-note").textContent = trail.length > 1
-    ? `Trail: ${trail.length} recorded positions on this map.` : "";
 }
 
 // Moving layer: the player marker, eased between live updates.
 function renderMe(s) {
   $("zone").textContent = s.zone || s.map || "Unknown zone";
-  $("subzone").textContent = s.subzone && s.subzone !== s.zone ? s.subzone : "";
   $("coords").textContent = s.x != null ? `${(s.x * 100).toFixed(1)}, ${(s.y * 100).toFixed(1)}` : "–";
   const mapChanged = shownMap !== s.mapID;
   setMapArt(s.mapID);

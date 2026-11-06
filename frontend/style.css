@@ -228,6 +228,14 @@ a { color: var(--gold); }
 .flag.dead { color: #ccc; }
 .flag.resting { color: #9cc2ff; box-shadow: inset 0 0 0 1px #1f3d6b; }
 .vitals-note { margin: 4px 0 0; }
+.vitals-note:empty { display: none; }
+/* what you're fighting */
+.enemy { margin: 4px 0 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.enemy .vital-label > span:first-child { color: var(--text); }
+.enemy .who { color: #ff8a7d; font-weight: 700; }
+.enemy .rank { margin-left: 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
+.enemy .more { margin-left: 6px; color: var(--muted); font-size: 14px; }
+.bar.enemy-bar .fill { background: linear-gradient(180deg, #f07a6e, var(--rage) 45%, #7a1a12); }
 
 /* --- map --------------------------------------------------------------------- */
 
@@ -262,7 +270,6 @@ a { color: var(--gold); }
   box-shadow: 0 0 0 1px #000, 0 4px 12px rgba(0, 0, 0, .6);
   padding: 6px 10px; font-size: 13px; white-space: nowrap; transform: translate(-50%, calc(-100% - 10px));
 }
-#trail-note { margin: 8px 0 0; }
 
 /* --- chart ------------------------------------------------------------------- */
 

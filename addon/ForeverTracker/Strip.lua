@@ -14,7 +14,7 @@
 --   49-166 chunk bytes         167  health %   168  power %
 --   169-170 Fletcher-16 of bytes 0-168
 --
--- Messages (identity, zone, quest log, gear, professions, journal events) are JSON prefixed with
+-- Messages (identity, zone, quest log, gear, professions, target, journal events) are JSON prefixed with
 -- a type letter, split into chunks and shown one chunk per HOLD interval.
 -- Unreadable (secret) values have their valid bit cleared and are sent as 0.
 
@@ -74,7 +74,8 @@ local current          -- { id, data, index, count, shown }
 local nextID = 0
 local lastSent = {}    -- type -> time last queued
 local lastQuests, lastGear, lastProfessions
-local URGENT = { G = true, P = true } -- jump ahead of the (long) quest log
+local URGENT = { T = true, G = true, P = true } -- jump ahead of the (long) quest log
+local lastTarget
 
 local function enqueue(kind, payload)
 	local data = kind .. json(payload)
@@ -143,6 +144,14 @@ local function schedule()
 	if FT.db.professions and (FT.professionsVersion ~= lastProfessions or not lastSent.P or now - lastSent.P > 60) then
 		lastProfessions = FT.professionsVersion
 		enqueue("P", compactProfessions(FT.db.professions))
+	end
+	-- Target: on change (at most twice a second) and every 10 s; {} means none.
+	local target = FT.ReadTarget and FT.ReadTarget()
+	local targetKey = target and json(target) or ""
+	local sinceT = lastSent.T and now - lastSent.T or math.huge
+	if (targetKey ~= lastTarget and sinceT >= 0.5) or sinceT > 10 then
+		lastTarget = targetKey
+		enqueue("T", target or {})
 	end
 end
 
