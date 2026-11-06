@@ -196,11 +196,10 @@ function renderVitals(s) {
   $("flags").innerHTML = flags.map(([c, t]) => `<span class="flag ${c}">${t}</span>`).join("");
 
   renderEnemy(s);
-  // Values assumed full after a while out of combat are shown without comment.
+  // Values from the combat log, or assumed full after a while out of combat,
+  // are shown without comment.
   const notes = [];
-  if (s.vitalsAt && !s.vitalsAssumed) {
-    notes.push(`From the game's combat log at your last combat action (${ago(s.vitalsAt)}).`);
-  } else if (!hp && !pw) {
+  if (!hp && !pw) {
     notes.push("Health and power show up once the game reports them, usually after the first fight.");
   }
   if (!state.live) notes.push("Shown as of the last update.");
