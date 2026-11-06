@@ -217,10 +217,10 @@ function renderEnemy(s) {
   $("enemy-who").innerHTML = `Fighting <span class="who">${esc(e.name)}</span>`
     + `${level != null ? ` · Lv ${level}` : ""}${e.rank ? `<span class="rank">${RANKS[e.rank]}</span>` : ""}`
     + `${e.more ? `<span class="more">+${e.more} more</span>` : ""}`;
-  // No health yet (no blows traded): just the name line.
-  const known = setBar("enemy-fill", "enemy-text", e.health, e.healthMax, e.pct);
-  $("enemy-fill").parentElement.hidden = !known;
-  $("enemy-text").hidden = !known;
+  // No health logged yet (e.g. right after the pull): a full bar, like your own.
+  const unknown = e.health == null && e.pct == null;
+  setBar("enemy-fill", "enemy-text", unknown && e.healthMax ? e.healthMax : e.health, e.healthMax,
+    unknown && !e.healthMax ? 100 : e.pct);
 }
 
 function setMapArt(mapID) {
