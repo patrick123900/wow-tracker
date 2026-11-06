@@ -20,7 +20,9 @@ Blizzard's addon API has **no network or file access**. The addon reads everythi
    the screen. The companion reads those pixels from the WoW window ~20 times a second (X11/XWayland on Linux,
    screen grab elsewhere), decodes them and uploads once a second. The strip carries numbers (level, XP, health,
    power, gold, map position) in every frame, plus a chunked message channel for text: identity, zone, the quest
-   log, equipped gear, professions and journal events. Format: see the header of `addon/ForeverTracker/Strip.lua`.
+   log, equipped gear, professions and journal events. The companion checks every 2 seconds whether the game is
+   running; while it isn't, it doesn't read the screen at all, and when it closes the site shows you offline
+   straight away. Format: see the header of `addon/ForeverTracker/Strip.lua`.
 2. **SavedVariables (on /reload, logout, exit).** It holds the full history (trail, XP samples, journal, quest
    log) and backfills anything the live channel missed, e.g. while the companion wasn't running.
 

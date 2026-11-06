@@ -245,6 +245,7 @@ def post(url, token, payload):
 class Companion:
     LIVE_EVERY = 1.0      # seconds between live uploads
     CAPTURE_EVERY = 0.05  # seconds between strip reads
+    GAME_CHECK_EVERY = 2  # seconds between checks that the game is running
     LIVE_STALE = 3.0      # no valid strip for this long = not live
 
     def __init__(self, cfg):
@@ -258,6 +259,9 @@ class Companion:
         self.pending = None
         self.last_heartbeat = 0
         self.was_running = None
+        self.game_up = None          # game process running (None until first checked)
+        self.last_game_check = 0
+        self.offline_pending = False  # game closed; "offline" not delivered yet
         self.last_file_check = 0
 
         self.live = cfg.get("live", True)
@@ -442,6 +446,36 @@ class Companion:
 
     # --- main loop -----------------------------------------------------------
 
+    def stop_capture(self):
+        if self.capture is not None:
+            try:
+                self.capture.close()
+            except Exception:  # noqa: BLE001 - already gone
+                pass
+            self.capture = None
+
+    def watch_game(self, now):
+        """Checks every few seconds whether the game runs. When it closes, the
+        screen is no longer read and the site hears "offline" right away."""
+        if now - self.last_game_check < self.GAME_CHECK_EVERY:
+            return
+        self.last_game_check = now
+        running = game_running() is not False  # unknown counts as running
+        if running != self.game_up:
+            if running:
+                log("game is running: reading the in-game strip")
+            else:
+                log("game is not running: stopped reading the screen, reporting offline")
+                self.stop_capture()
+                self.frame, self.target = None, None
+                self.offline_pending = True
+            self.game_up = running
+        if self.offline_pending and not self.game_up:
+            if self.send({"kind": "presence", "online": False}):
+                self.offline_pending = False
+                self.was_running = False
+                self.last_heartbeat = now
+
     def tick(self):
         now = time.time()
         # The settings file goes first: it holds the backend address.
@@ -451,8 +485,9 @@ class Companion:
             if self.pending and self.send(self.pending):
                 self.pending = None
                 self.last_heartbeat = now
+        self.watch_game(now)
 
-        if self.live and now >= self.capture_retry_at:
+        if self.live and self.game_up and now >= self.capture_retry_at:
             try:
                 self.read_strip(now)
                 self.capture_failures = 0
@@ -470,9 +505,8 @@ class Companion:
             return
         if now - self.last_heartbeat < self.heartbeat_every:
             return
-        running = game_running()
         snap = self.db.get("snapshot") or {}
-        online = running is not False and snap.get("status") == "online"
+        online = bool(self.game_up) and snap.get("status") == "online"
         if online or self.was_running:
             if self.send({"kind": "presence", "online": online}):
                 self.last_heartbeat = now

@@ -124,6 +124,9 @@ class X11Capture:
         self.window = None
         self.next_search = 0
 
+    def close(self):
+        self.display.close()
+
     def find_window(self):
         root = self.display.screen().root
         stack = [root]
@@ -171,6 +174,9 @@ class ScreenCapture:
     def __init__(self):
         from PIL import ImageGrab
         self.grab_image = ImageGrab.grab
+
+    def close(self):
+        pass
 
     def grab(self):
         img = self.grab_image(bbox=(0, 0, WIDTH, CELL_PX)).convert("RGB")
