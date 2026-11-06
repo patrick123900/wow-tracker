@@ -383,19 +383,17 @@ class Companion:
         return self.frame is not None and now - self.frame_at < self.LIVE_STALE
 
     def enemy(self, flags):
-        """What you're fighting, while in combat: health from the combat log;
-        level and rank when it's your target."""
+        """What you're fighting, while in combat; level and rank when it's
+        your target."""
         if not flags.get("combat"):
             return None
         target = self.target
         foe = self.combat_log.enemy(target)
         if foe is None and target and not target.get("dead"):
             # Targeted but not in the log yet (no blows traded): name only.
-            foe = {"name": target["name"], "health": None, "healthMax": None, "targeted": True, "more": 0}
+            foe = {"name": target["name"], "targeted": True, "more": 0}
         if foe and foe["targeted"]:
             foe.update(level=target.get("level"), rank=target.get("rank"))
-            if foe["health"] is None and target.get("pct") is not None:
-                foe["pct"] = target["pct"]
         return foe
 
     def post_live(self, now):

@@ -208,7 +208,7 @@ function renderVitals(s) {
 const RANKS = { elite: "Elite", rare: "Rare", rareelite: "Rare elite", worldboss: "Boss" };
 
 // What you're fighting: your target, or the creature you last traded blows
-// with. Health from the game's combat log; shown only while in combat.
+// with; shown only while in combat.
 function renderEnemy(s) {
   const e = s.enemy;
   $("enemy").hidden = !(e && s.combat);
@@ -217,10 +217,6 @@ function renderEnemy(s) {
   $("enemy-who").innerHTML = `Fighting <span class="who">${esc(e.name)}</span>`
     + `${level != null ? ` · Lv ${level}` : ""}${e.rank ? `<span class="rank">${RANKS[e.rank]}</span>` : ""}`
     + `${e.more ? `<span class="more">+${e.more} more</span>` : ""}`;
-  // No health logged yet (e.g. right after the pull): a full bar, like your own.
-  const unknown = e.health == null && e.pct == null;
-  setBar("enemy-fill", "enemy-text", unknown && e.healthMax ? e.healthMax : e.health, e.healthMax,
-    unknown && !e.healthMax ? 100 : e.pct);
 }
 
 function setMapArt(mapID) {

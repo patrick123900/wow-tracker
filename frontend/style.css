@@ -228,12 +228,11 @@ a { color: var(--gold); }
 .flag.dead { color: #ccc; }
 .flag.resting { color: #9cc2ff; box-shadow: inset 0 0 0 1px #1f3d6b; }
 /* what you're fighting */
-.enemy { margin: 4px 0 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.enemy { margin: 4px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
 .enemy .vital-label > span:first-child { color: var(--text); }
 .enemy .who { color: #ff8a7d; font-weight: 700; }
 .enemy .rank { margin-left: 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--label); }
 .enemy .more { margin-left: 6px; color: var(--muted); font-size: 14px; }
-.bar.enemy-bar .fill { background: linear-gradient(180deg, #f07a6e, var(--rage) 45%, #7a1a12); }
 
 /* --- map --------------------------------------------------------------------- */
 

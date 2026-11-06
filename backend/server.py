@@ -101,9 +101,7 @@ def clean_enemy(e):
     """What the player is fighting (a creature; never another player)."""
     if not isinstance(e, dict) or not _text(e.get("name")):
         return None
-    pct = _int(e.get("pct"))
-    return {"name": _text(e["name"], 60), "level": _int(e.get("level")), "health": _int(e.get("health")),
-            "healthMax": _int(e.get("healthMax")), "pct": pct if pct is not None and 0 <= pct <= 100 else None,
+    return {"name": _text(e["name"], 60), "level": _int(e.get("level")),
             "rank": e.get("rank") if e.get("rank") in ENEMY_RANKS else None,
             "targeted": bool(e.get("targeted")), "more": min(_int(e.get("more")) or 0, 40)}
 

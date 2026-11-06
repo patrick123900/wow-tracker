@@ -4,9 +4,9 @@ logging on) for the player's current health and power.
 The client writes an "advanced" block on most lines describing one unit:
     infoGUID, ownerGUID, currentHP, maxHP, attackPower, spellPower, armor,
     3 more fields, powerType, currentPower, maxPower, powerCost, x, y, ...
-Only lines about the player's own character are used, plus the health of
-creatures that are fighting the player (never other players); the log also
-contains everyone nearby, and none of that is passed on.
+Only lines about the player's own character are used, plus which creatures
+are fighting the player (never other players), for "what you're fighting";
+the log also contains everyone nearby, and none of that is passed on.
 """
 
 import csv
@@ -131,8 +131,7 @@ class CombatLogTail:
             pick = max(active, key=lambda f: f["fought"])
         if pick is None:
             return None
-        return {"name": pick["name"], "health": 0 if pick["dead"] else pick["health"],
-                "healthMax": pick["healthMax"], "t": pick["t"],
+        return {"name": pick["name"], "t": pick["t"],
                 "targeted": bool(target and target.get("name") == pick["name"]),
                 "more": len([f for f in active if f is not pick])}
 

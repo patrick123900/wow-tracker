@@ -1,7 +1,7 @@
 -- Equipped gear and professions, for the website's equipment and profession
 -- cards. Both are re-read on their game events and every RECHECK seconds as a
 -- safety net, and only sent on when something actually changed. Also the
--- current target, for the enemy health bar.
+-- current target, for "what you're fighting".
 
 local FT = ForeverTracker
 local safe, read = FT.Safe, FT.Read
@@ -165,9 +165,8 @@ end
 
 local RANKS = { elite = true, rare = true, rareelite = true, worldboss = true }
 
--- The current target when it's a creature you can fight, else nil. Forever
--- keeps its health secret and scrambles its GUID, so the companion matches it
--- to the combat log by name.
+-- The current target when it's a creature you can fight, else nil: the
+-- website shows what you're fighting (Forever keeps its health secret).
 function FT.ReadTarget()
 	if not read(nil, UnitExists, "target") or not read(nil, UnitCanAttack, "player", "target") then return nil end
 	if read(nil, UnitIsPlayer, "target") then return nil end -- other players stay private
@@ -179,7 +178,6 @@ function FT.ReadTarget()
 		level = read(nil, UnitLevel, "target"), -- -1 for "??"
 		rank = RANKS[rank] and rank or nil,
 		dead = read(nil, UnitIsDead, "target") and true or nil,
-		pct = FT.Percent(nil, UnitHealthPercent, "target", false, CurveConstants and CurveConstants.ScaleTo100),
 	}
 end
 
