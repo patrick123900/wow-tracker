@@ -178,13 +178,20 @@ function setBar(fill, text, cur, max, percent) {
   return false;
 }
 
+// When the game hasn't reported a current value (it keeps them secret), show
+// the bar as it rests out of combat: full, or empty for rage and when dead.
+function resting(cur, max, percent, empty) {
+  return cur != null || percent != null ? cur : empty ? 0 : max;
+}
+
 function renderVitals(s) {
-  const hp = setBar("hp-fill", "hp-text", s.health, s.healthMax, s.healthPct);
+  const dead = s.dead || s.ghost;
+  const hp = setBar("hp-fill", "hp-text", resting(s.health, s.healthMax, s.healthPct, dead), s.healthMax, s.healthPct);
   $("hp-fill").closest(".vital").hidden = !hp;
   const p = shownPower(s.power);
   const [label, color] = POWER[p.type] || [p.type ? p.type[0] + p.type.slice(1).toLowerCase() : "Power", "var(--mana)"];
   $("power-name").textContent = label;
-  const pw = setBar("power-fill", "power-text", p.cur, p.max, p.pct);
+  const pw = setBar("power-fill", "power-text", resting(p.cur, p.max, p.pct, dead || p.type === "RAGE"), p.max, p.pct);
   $("power-fill").closest(".vital").hidden = !pw;
   $("power-fill").style.setProperty("--power", color);
 
@@ -196,14 +203,6 @@ function renderVitals(s) {
   $("flags").innerHTML = flags.map(([c, t]) => `<span class="flag ${c}">${t}</span>`).join("");
 
   renderEnemy(s);
-  // Values from the combat log, or assumed full after a while out of combat,
-  // are shown without comment.
-  const notes = [];
-  if (!hp && !pw) {
-    notes.push("Health and power show up once the game reports them, usually after the first fight.");
-  }
-  if (!state.live) notes.push("Shown as of the last update.");
-  $("vitals-note").textContent = notes.join(" ");
 }
 
 const RANKS = { elite: "Elite", rare: "Rare", rareelite: "Rare elite", worldboss: "Boss" };
