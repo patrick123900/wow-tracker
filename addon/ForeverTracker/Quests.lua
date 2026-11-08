@@ -107,7 +107,7 @@ end
 
 -- The last saved quest log still holds quests that were just removed.
 local function knownTitle(questID)
-	for _, q in ipairs(FT.db.quests or {}) do
+	for _, q in ipairs(FT.char and FT.char.quests or {}) do
 		if q.id == questID then return q.title end
 	end
 	return questTitle(questID)

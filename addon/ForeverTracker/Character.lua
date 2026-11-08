@@ -142,7 +142,8 @@ function FT.CharacterDebug()
 	local list = readProfessions()
 	FT.Print(string.format("skills: GetProfessions %s, %s skill lines, sections: %s",
 		GetProfessions and "yes" or "no", tostring(n), table.concat(headers, ", ")))
-	FT.Print(string.format("professions read: %s; gear: %d items", list and #list or "unreadable", #(FT.db.gear or {})))
+	FT.Print(string.format("professions read: %s; gear: %d items", list and #list or "unreadable",
+		#(FT.char and FT.char.gear or {})))
 end
 
 -- Journal entries for professions: when one is learned, every 5 points and
@@ -194,7 +195,7 @@ local function key(list)
 end
 
 FT.OnRefresh(function(recording)
-	local db = FT.db
+	local db = FT.char
 	if not recording then
 		db.gear, db.professions = nil, nil
 		gearKey, profKey = nil, nil

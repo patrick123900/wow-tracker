@@ -245,6 +245,7 @@ def post(url, token, payload):
 class Companion:
     LIVE_EVERY = 1.0      # seconds between live uploads
     CAPTURE_EVERY = 0.05  # seconds between strip reads
+    IDENTITY_GAP = 3      # seconds without the strip after which the character may have changed
     GAME_CHECK_EVERY = 2  # seconds between checks that the game is running
     LIVE_STALE = 3.0      # no valid strip for this long = not live
 
@@ -292,25 +293,39 @@ class Companion:
         s = self.settings()
         return bool(s.get("enabled")) and not s.get("appearOffline")
 
+    def character(self):
+        """The current character's saved data and its "Name-Realm" key. Saves
+        from before per-character storage keep it all at the top level."""
+        if not self.db:
+            return {}, None
+        chars = self.db.get("chars")
+        if isinstance(chars, dict) and self.db.get("current") in chars:
+            return chars[self.db["current"]] or {}, self.db["current"]
+        snap = self.db.get("snapshot") or {}
+        key = f"{snap['name']}-{snap.get('realm', '')}" if snap.get("name") else None
+        return self.db, key
+
     def build_payload(self, running):
         s = self.settings()
         if not s.get("enabled"):
             return None  # tracking off: nothing leaves this machine
         if s.get("appearOffline"):
             return {"kind": "presence", "online": False}
-        snap = self.db.get("snapshot")
-        if not snap:
+        char, key = self.character()
+        snap = char.get("snapshot")
+        if not snap or not key:
             return None
         return {
             "kind": "snapshot",
+            "character": key,
             "gameRunning": running,
             "snapshot": snap,
-            "events": self.db.get("events") or [],
-            "positions": self.db.get("positions") or [],
-            "xp": self.db.get("xp") or [],
-            "quests": self.db.get("quests"),
-            "gear": self.db.get("gear"),
-            "professions": self.db.get("professions"),
+            "events": char.get("events") or [],
+            "positions": char.get("positions") or [],
+            "xp": char.get("xp") or [],
+            "quests": char.get("quests"),
+            "gear": char.get("gear"),
+            "professions": char.get("professions"),
         }
 
     def send(self, payload):
@@ -354,6 +369,10 @@ class Companion:
         frame = strip.decode(data) if data else None
         if not frame:
             return
+        if self.frame_at and now - self.frame_at > self.IDENTITY_GAP:
+            # The strip was gone (loading screen, character select, reload):
+            # it may be another character now. Wait for its identity.
+            self.forget_character()
         self.frame, self.frame_at = frame, now
         if not self.live_logged:
             log("reading live data from the in-game strip")
@@ -364,7 +383,10 @@ class Companion:
             return
         kind, payload = msg
         if kind == "I":
-            self.identity = payload
+            if isinstance(payload, dict) and payload.get("name") and payload.get("realm"):
+                self.identity = payload
+                if self.combat_log:
+                    self.combat_log.follow(payload["name"])
         elif kind == "Z":
             self.zone = payload
         elif kind == "Q":
@@ -382,6 +404,13 @@ class Companion:
                 self.professions, self.sheet_dirty = professions, True
         elif kind == "E":
             self.events.append(payload)
+
+    def forget_character(self):
+        """Drops what the strip said about the last character. Its pending
+        journal events are in its saved file too, so none are lost."""
+        self.identity = self.zone = self.quests = self.gear = self.professions = self.target = None
+        self.events = []
+        self.quests_dirty = self.sheet_dirty = False
 
     def is_live(self, now):
         return self.frame is not None and now - self.frame_at < self.LIVE_STALE
@@ -413,10 +442,11 @@ class Companion:
                 if self.send({"kind": "presence", "online": False}):
                     self.last_hidden_post = now
             return
-        if not flags["sharing"]:
-            return
+        if not flags["sharing"] or not self.identity:
+            return  # nothing to share, or not yet known which character this is
         self.last_hidden_post = 0
-        payload = {"kind": "live", "frame": self.frame, "identity": self.identity,
+        character = f"{self.identity['name']}-{self.identity['realm']}"
+        payload = {"kind": "live", "character": character, "frame": self.frame, "identity": self.identity,
                    "zone": self.zone, "events": self.events}
         # Health/power from the game's combat log, only while the in-game
         # setting is on (the strip says so).
@@ -505,7 +535,7 @@ class Companion:
             return
         if now - self.last_heartbeat < self.heartbeat_every:
             return
-        snap = self.db.get("snapshot") or {}
+        snap = self.character()[0].get("snapshot") or {}
         online = bool(self.game_up) and snap.get("status") == "online"
         if online or self.was_running:
             if self.send({"kind": "presence", "online": online}):

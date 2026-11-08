@@ -11,7 +11,7 @@ local ADDON = ...
 local FT = {}
 _G.ForeverTracker = FT
 
-local SCHEMA = 2
+local SCHEMA = 3 -- 3: history kept per character in db.chars
 local MAX_POSITIONS = 400
 local MAX_XP = 600
 local MAX_EVENTS = 200
@@ -26,7 +26,8 @@ local DEFAULTS = {
 	combatLog = true,
 }
 
-local db
+local db   -- the whole saved table: settings (account-wide) and db.chars
+local char -- this character's part of it: history, snapshot, quests, gear...
 local leaving = false
 local lastZone
 local lastXPSample = 0
@@ -200,37 +201,37 @@ local eventListeners = {}
 function FT.OnEvent(fn) eventListeners[#eventListeners + 1] = fn end
 
 function FT.AddEvent(kind, data)
-	if not FT.IsRecording() then return end
+	if not char or not FT.IsRecording() then return end
 	data = data or {}
 	data.t = now()
 	data.type = kind
-	push(db.events, data, MAX_EVENTS)
+	push(char.events, data, MAX_EVENTS)
 	for _, fn in ipairs(eventListeners) do fn(data) end
 end
 local addEvent = FT.AddEvent
 
 local function sampleXP(force)
-	if not FT.IsRecording() then return end
+	if not char or not FT.IsRecording() then return end
 	local t = now()
 	if not force and t - lastXPSample < XP_THROTTLE then return end
 	local level = read("level", UnitLevel, "player")
 	local xp, xpMax = read("xp", UnitXP, "player"), read("xpMax", UnitXPMax, "player")
 	if not (level and xp and xpMax and xpMax > 0) then return end
 	lastXPSample = t
-	push(db.xp, { t = t, level = level, xp = xp, xpMax = xpMax }, MAX_XP)
+	push(char.xp, { t = t, level = level, xp = xp, xpMax = xpMax }, MAX_XP)
 end
 
 local function samplePosition()
-	if not FT.IsRecording() then return end
+	if not char or not FT.IsRecording() then return end
 	local pos = FT.PlayerPosition()
 	if not (pos and pos.x) then return end
-	local last = db.positions[#db.positions]
+	local last = char.positions[#char.positions]
 	if last and last.mapID == pos.mapID
 		and math.abs(last.x - pos.x) < 0.002 and math.abs(last.y - pos.y) < 0.002 then
 		return
 	end
 	pos.t = now()
-	push(db.positions, pos, MAX_POSITIONS)
+	push(char.positions, pos, MAX_POSITIONS)
 end
 
 local function initDB()
@@ -241,10 +242,39 @@ local function initDB()
 	for k, v in pairs(DEFAULTS) do
 		if db.settings[k] == nil then db.settings[k] = v end
 	end
-	db.events = db.events or {}
-	db.positions = db.positions or {}
-	db.xp = db.xp or {}
+	db.chars = db.chars or {}
 	FT.db = db
+end
+
+local PER_CHARACTER = { "events", "positions", "xp", "snapshot", "quests", "gear", "professions" }
+
+-- Picks this character's part of the saved table (by "Name-Realm"). Before
+-- schema 3 everything was stored at the top level for one character; that
+-- history is moved to the character it belongs to (the one in its snapshot),
+-- whichever character logs in first.
+local function selectCharacter()
+	if char then return true end
+	local name, realm = read(nil, UnitName, "player"), read(nil, GetRealmName)
+	if not name or name == "" or name == UNKNOWNOBJECT or not realm or realm == "" then return false end
+	local key = name .. "-" .. realm
+	if db.events or db.snapshot then
+		local s = db.snapshot
+		local owner = s and s.name and (s.name .. "-" .. (s.realm or realm)) or key
+		local old = db.chars[owner] or {}
+		for _, k in ipairs(PER_CHARACTER) do
+			if old[k] == nil then old[k] = db[k] end
+			db[k] = nil
+		end
+		db.chars[owner] = old
+	end
+	char = db.chars[key] or {}
+	char.events = char.events or {}
+	char.positions = char.positions or {}
+	char.xp = char.xp or {}
+	db.chars[key] = char
+	db.current = key
+	FT.char = char
+	return true
 end
 
 -- Other files hook into each refresh with FT.OnRefresh(fn(recording)).
@@ -254,23 +284,23 @@ function FT.OnRefresh(fn) refreshers[#refreshers + 1] = fn end
 -- Refreshes the cached snapshot. Runs every TICK seconds, so the file holds
 -- the last good state whenever the client decides to write it.
 local function refresh()
-	if not db then return end
+	if not db or not selectCharacter() then return end
 	local recording = FT.IsRecording()
 	for _, fn in ipairs(refreshers) do fn(recording) end
 	if not recording then
-		db.snapshot = nil
-		db.quests = nil
+		char.snapshot = nil
+		char.quests = nil
 		FT.current = nil
 		return
 	end
 	local snap = FT.BuildSnapshot()
 	if plausible(snap) then
 		FT.current = snap
-		db.snapshot = snap
+		char.snapshot = snap
 	end
 	if FT.ReadQuestLog and FT.questsDirty then
 		FT.questsDirty = false
-		db.quests = FT.ReadQuestLog()
+		char.quests = FT.ReadQuestLog()
 		FT.questsVersion = (FT.questsVersion or 0) + 1
 	end
 	local t = now()
@@ -360,8 +390,8 @@ function handlers.QUIT_CANCEL() leaving = false end
 function handlers.PLAYER_LOGOUT()
 	-- Unit data is already gone here, so keep the last cached snapshot and
 	-- only update its status.
-	if db.snapshot then
-		db.snapshot.status = leaving and "offline" or "online"
+	if char and char.snapshot then
+		char.snapshot.status = leaving and "offline" or "online"
 	end
 	db.savedAt = now()
 end

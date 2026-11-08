@@ -1,8 +1,12 @@
 -- Loads the addon against stubbed WoW APIs, simulates a few seconds of play
 -- and writes every pixel-strip frame (171 bytes each) to a binary file.
--- Usage: lua tests/strip_sim.lua <frames.bin>
+-- Usage: lua tests/strip_sim.lua <frames.bin> [saved-variables.lua [character [realm]]]
+-- With a SavedVariables file, starts from that saved data (as the game would)
+-- and prints how it's stored per character afterwards.
 
-local out = arg[1]
+local out, savedFile = arg[1], arg[2]
+local simName, simRealm = arg[3] or "Pattes", arg[4] or "Test Realm"
+if savedFile then dofile(savedFile) end -- defines ForeverTrackerDB
 local clock, gtime = 1793890000, 0
 local SECRET = setmetatable({}, { __tostring = function() return "<secret>" end })
 
@@ -66,8 +70,8 @@ function UnitRace() return "Dwarf" end
 function UnitLevel() return S.level end
 function GetMaxPlayerLevel() return 60 end
 function GetGuildInfo() return nil end
-function UnitName() return "Pattes" end
-function GetRealmName() return "Test Realm" end
+function UnitName() return simName end
+function GetRealmName() return simRealm end
 function UnitFactionGroup() return "Alliance" end
 function UnitSex() return 2 end
 function UnitXP() return S.xp end
@@ -147,3 +151,19 @@ for step = 1, 450 do -- 45 seconds at 10 Hz
 end
 f:close()
 print("frames written")
+if savedFile then
+	local db = ForeverTrackerDB
+	print("current: " .. tostring(db.current))
+	for _, k in ipairs({ "events", "positions", "xp", "snapshot", "quests", "gear", "professions" }) do
+		if db[k] ~= nil then print("left at top level: " .. k) end
+	end
+	local keys = {}
+	for key in pairs(db.chars) do keys[#keys + 1] = key end
+	table.sort(keys)
+	for _, key in ipairs(keys) do
+		local c = db.chars[key]
+		print(string.format("%s: %d events, %d positions, %d xp, snapshot %s (level %s), %d quests, %d gear",
+			key, #c.events, #c.positions, #c.xp, c.snapshot and c.snapshot.name or "-",
+			c.snapshot and tostring(c.snapshot.level) or "-", #(c.quests or {}), #(c.gear or {})))
+	end
+end

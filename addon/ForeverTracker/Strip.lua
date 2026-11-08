@@ -133,17 +133,18 @@ local function schedule()
 		lastZoneKey = zoneKey
 		enqueue("Z", { zone = s.zone, subzone = s.subzone, map = s.map })
 	end
-	if FT.db.quests and (FT.questsVersion ~= lastQuests or not lastSent.Q or now - lastSent.Q > 60) then
+	local char = FT.char
+	if char.quests and (FT.questsVersion ~= lastQuests or not lastSent.Q or now - lastSent.Q > 60) then
 		lastQuests = FT.questsVersion
-		enqueue("Q", FT.db.quests)
+		enqueue("Q", char.quests)
 	end
-	if FT.db.gear and (FT.gearVersion ~= lastGear or not lastSent.G or now - lastSent.G > 60) then
+	if char.gear and (FT.gearVersion ~= lastGear or not lastSent.G or now - lastSent.G > 60) then
 		lastGear = FT.gearVersion
-		enqueue("G", compactGear(FT.db.gear))
+		enqueue("G", compactGear(char.gear))
 	end
-	if FT.db.professions and (FT.professionsVersion ~= lastProfessions or not lastSent.P or now - lastSent.P > 60) then
+	if char.professions and (FT.professionsVersion ~= lastProfessions or not lastSent.P or now - lastSent.P > 60) then
 		lastProfessions = FT.professionsVersion
-		enqueue("P", compactProfessions(FT.db.professions))
+		enqueue("P", compactProfessions(char.professions))
 	end
 	-- Target: on change (at most twice a second) and every 10 s; {} means none.
 	local target = FT.ReadTarget and FT.ReadTarget()

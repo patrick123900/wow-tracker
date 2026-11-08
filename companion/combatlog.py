@@ -50,6 +50,7 @@ class CombatLogTail:
         self.offset = 0
         self.partial = b""
         self.me = None          # player GUID, learned from "mine + player" source flags
+        self.expect = None      # first name of the character being played (from the addon)
         self.full_name = None   # e.g. "Pattes-Heals-PvP-EU": first name, surname, realm
         self.surnames = {}      # first name -> surname, kept across log files
         self.vitals = None      # latest {"t", "health", "healthMax", "power": {...}}
@@ -88,6 +89,21 @@ class CombatLogTail:
         if self.me is None and skip_first:
             self.learn_identity(path)
 
+    def mine(self, name):
+        """A "First-Surname-Realm" log name belongs to the character being
+        played (any, until the addon has said who that is)."""
+        return self.expect is None or name.strip('"').split("-")[0] == self.expect
+
+    def follow(self, first_name):
+        """Switches to another character: forget the last one's GUID, health
+        and fights, and find the new one in the log."""
+        if first_name == self.expect:
+            return
+        self.expect = first_name
+        self.me, self.full_name, self.vitals, self.foes = None, None, None, {}
+        if self.path:
+            self.learn_identity(self.path)
+
     def learn_identity(self, path):
         """Finds our GUID and full name earlier in the log when the recent
         backfill had no line of ours (e.g. after standing idle)."""
@@ -102,7 +118,7 @@ class CombatLogTail:
                     flags = int(fields[3], 16)
                 except ValueError:
                     continue
-                if flags & MINE and flags & PLAYER:
+                if flags & MINE and flags & PLAYER and self.mine(fields[2]):
                     self.me, self.full_name = fields[1], fields[2].strip('"')
                     return
 
@@ -165,7 +181,7 @@ class CombatLogTail:
                 flags = int(fields[3], 16)
             except ValueError:
                 flags = 0
-            if flags & MINE and flags & PLAYER:
+            if flags & MINE and flags & PLAYER and self.mine(fields[2]):
                 self.me, self.full_name = fields[1], fields[2]
         if self.me is None:
             return

@@ -45,7 +45,45 @@ body {
   min-height: 100vh;
 }
 
-.page { max-width: 1200px; margin: 0 auto; padding: 32px 20px 48px; }
+.page {
+  max-width: 1480px; margin: 0 auto; padding: 32px 20px 48px;
+  display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 26px; align-items: start;
+}
+.content { min-width: 0; }
+
+/* --- character panel ---------------------------------------------------------- */
+
+.roster {
+  position: sticky; top: 24px; padding: 16px 12px; border-radius: 6px;
+  background: var(--noise), linear-gradient(180deg, var(--frame-1), var(--frame-2));
+  border: 1px solid #000;
+  box-shadow: inset 0 0 0 1px var(--trim-dark), inset 0 0 0 3px #1a130c, inset 0 0 0 4px #7a5c25,
+    inset 0 0 28px rgba(0, 0, 0, .7), 0 10px 28px rgba(0, 0, 0, .55);
+}
+.roster h2 { font-size: 15px; color: var(--label); text-align: center; margin: 2px 0 14px; text-shadow: 0 1px 0 #000; }
+.roster nav { display: grid; gap: 8px; }
+.roster button {
+  display: flex; align-items: center; gap: 11px; width: 100%; padding: 7px 9px; cursor: pointer;
+  font: inherit; color: var(--text); text-align: left; border-radius: 4px;
+  background: linear-gradient(180deg, #2a2118, #15100b); border: 1px solid #000;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.roster button:hover { box-shadow: inset 0 0 0 1px var(--trim); }
+.roster button.on { box-shadow: inset 0 0 0 1px var(--trim-light), 0 0 12px rgba(255, 209, 0, .22); background: linear-gradient(180deg, #3a2c1b, #1b140c); }
+.mini-crest {
+  position: relative; flex: none; width: 42px; height: 42px; border-radius: 50%;
+  display: grid; place-items: center; font: 700 16px Cinzel, serif; color: var(--c, var(--gold));
+  background: radial-gradient(circle, #3a2d22, #120d09); border: 2px solid var(--trim); box-shadow: 0 0 0 1px #000;
+}
+.mini-crest img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.mini-crest.online::after {
+  content: ""; position: absolute; right: -2px; bottom: -2px; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--online); border: 2px solid #15100b;
+}
+.roster .label { display: grid; min-width: 0; line-height: 1.2; }
+.roster .label b { font: 700 15px Cinzel, serif; color: var(--c, var(--gold)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roster .label span { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roster .label .seen.online { color: #9be8a8; }
 .muted { color: var(--muted); }
 .small { font-size: 14px; }
 h1, h2, h3 { font-family: Cinzel, Georgia, serif; font-weight: 700; margin: 0; letter-spacing: .02em; }
@@ -159,6 +197,11 @@ a { color: var(--gold); }
 .gear { grid-area: gear; }
 .professions { grid-area: prof; }
 @media (max-width: 960px) {
+  .page { display: block; }
+  .roster { position: static; margin-bottom: 22px; padding: 12px; }
+  .roster h2 { display: none; }
+  .roster nav { display: flex; overflow-x: auto; scrollbar-width: thin; padding: 2px; }
+  .roster button { width: auto; flex: 0 0 auto; padding-right: 16px; }
   .grid { grid-template-columns: 1fr; grid-template-areas: "prog" "vit" "gear" "loc" "prof" "quest" "jour" "time"; }
   .presence { align-items: flex-start; }
 }

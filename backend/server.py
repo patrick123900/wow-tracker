@@ -2,9 +2,10 @@
 """Forever Tracker backend.
 
 - POST /api/ingest   companion uploads (LAN only, bearer token)
-- GET  /api/state    latest snapshot + online status
-- GET  /api/history  position trail, XP samples, event log
-- GET  /api/stream   Server-Sent Events; fires "update" after each ingest
+- GET  /api/characters   every tracked character, most recently played first
+- GET  /api/state    latest snapshot + online status          (?c=<Name-Realm>, default: last played)
+- GET  /api/history  position trail, XP samples, event log    (?c=...)
+- GET  /api/stream   Server-Sent Events: "live" state each second, "update" when history changed (?c=...)
 - everything else    static frontend
 
 Standard library only. Configure with environment variables (see README).
@@ -116,28 +117,87 @@ def clean_professions(items):
 
 
 # --- storage -----------------------------------------------------------------
+#
+# Each character ("Name-Realm") has its own history rows and its own kv
+# entries ("char:<key>:snapshot" etc). Global kv: "presence" (online, t, and
+# which character) and "current" (the character played most recently).
+
+CHAR_KV = ("snapshot", "quests", "gear", "professions", "liveAt", "updatedAt")
+CHARACTER_FIELDS = ("name", "surname", "realm", "faction", "race", "class", "classToken", "sex", "level")
+
+
+def char_key(name, realm):
+    return f"{name}-{realm}" if isinstance(name, str) and name and isinstance(realm, str) and realm else None
+
 
 class Store:
     def __init__(self, path):
         self.lock = threading.Lock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        self.migrate()
         self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events (
-                t INTEGER NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL,
-                PRIMARY KEY (t, type, data));
+                char TEXT NOT NULL, t INTEGER NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL,
+                PRIMARY KEY (char, t, type, data));
             CREATE TABLE IF NOT EXISTS positions (
-                t INTEGER PRIMARY KEY, mapID INTEGER, map TEXT, x REAL, y REAL);
+                char TEXT NOT NULL, t INTEGER NOT NULL, mapID INTEGER, map TEXT, x REAL, y REAL,
+                PRIMARY KEY (char, t));
             CREATE TABLE IF NOT EXISTS xp (
-                t INTEGER PRIMARY KEY, level INTEGER, xp INTEGER, xpMax INTEGER);
+                char TEXT NOT NULL, t INTEGER NOT NULL, level INTEGER, xp INTEGER, xpMax INTEGER,
+                PRIMARY KEY (char, t));
         """)
         self.live_version = 0
         self.history_version = 0
         self.changed = threading.Condition()
-        self.last_position = None
-        self.last_xp = None
-        self.combat_ended_at = None
+        self.last_position = {}     # character -> (t, mapID, x, y)
+        self.last_xp = {}           # character -> (t, (level, xp))
+        self.combat_ended_at = {}   # character -> time its last fight ended
+
+    def migrate(self):
+        """Before per-character storage, one character's data had no key. It
+        all goes to that character (named in its snapshot), in one transaction."""
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(events)")]
+        if not cols or "char" in cols:
+            return
+        snap = self.get("snapshot") or {}
+        owner = char_key(snap.get("name"), snap.get("realm"))
+        if owner is None:
+            raise SystemExit("old database without a character snapshot; can't tell whose history it is")
+        with self.conn:
+            self.conn.executescript("""
+                ALTER TABLE events RENAME TO events_v1;
+                ALTER TABLE positions RENAME TO positions_v1;
+                ALTER TABLE xp RENAME TO xp_v1;
+                CREATE TABLE events (
+                    char TEXT NOT NULL, t INTEGER NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL,
+                    PRIMARY KEY (char, t, type, data));
+                CREATE TABLE positions (
+                    char TEXT NOT NULL, t INTEGER NOT NULL, mapID INTEGER, map TEXT, x REAL, y REAL,
+                    PRIMARY KEY (char, t));
+                CREATE TABLE xp (
+                    char TEXT NOT NULL, t INTEGER NOT NULL, level INTEGER, xp INTEGER, xpMax INTEGER,
+                    PRIMARY KEY (char, t));
+            """)
+            self.conn.execute("INSERT INTO events SELECT ?, t, type, data FROM events_v1", (owner,))
+            self.conn.execute("INSERT INTO positions SELECT ?, t, mapID, map, x, y FROM positions_v1", (owner,))
+            self.conn.execute("INSERT INTO xp SELECT ?, t, level, xp, xpMax FROM xp_v1", (owner,))
+            for table in ("events", "positions", "xp"):
+                old = self.conn.execute(f"SELECT count(*) FROM {table}_v1").fetchone()[0]
+                new = self.conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+                if old != new:
+                    raise RuntimeError(f"migration lost rows in {table}: {old} -> {new}")
+            self.conn.executescript("DROP TABLE events_v1; DROP TABLE positions_v1; DROP TABLE xp_v1;")
+            for k in CHAR_KV:
+                value = self.get(k)
+                if value is not None:
+                    self.cput(owner, k, value)
+                    self.conn.execute("DELETE FROM kv WHERE key=?", (k,))
+            self.put("current", owner)
+            presence = self.get("presence") or {"online": False, "t": 0}
+            self.put("presence", {**presence, "character": owner})
+        print(f"migrated existing history to {owner}", flush=True)
 
     def get(self, key):
         row = self.conn.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
@@ -146,6 +206,23 @@ class Store:
     def put(self, key, value):
         self.conn.execute("INSERT OR REPLACE INTO kv VALUES (?, ?)", (key, json.dumps(value)))
 
+    def cget(self, char, key):
+        return self.get(f"char:{char}:{key}")
+
+    def cput(self, char, key, value):
+        self.put(f"char:{char}:{key}", value)
+
+    def characters(self):
+        return [k[len("char:"):-len(":snapshot")] for (k,) in self.conn.execute(
+            "SELECT key FROM kv WHERE key LIKE 'char:%:snapshot'")]
+
+    def resolve(self, char):
+        """The character asked for, or the one played most recently."""
+        with self.lock:
+            if char and self.cget(char, "snapshot") is not None:
+                return char
+            return self.get("current")
+
     def notify(self, history=False):
         with self.changed:
             self.live_version += 1
@@ -153,20 +230,20 @@ class Store:
                 self.history_version += 1
             self.changed.notify_all()
 
-    def add_events(self, events):
+    def add_events(self, char, events):
         added = 0
         for e in events or []:
             if isinstance(e, dict) and isinstance(e.get("t"), int) and e.get("type"):
                 data = {k: v for k, v in e.items() if k in EVENT_FIELDS}
-                cur = self.conn.execute("INSERT OR IGNORE INTO events VALUES (?, ?, ?)",
-                                        (e["t"], str(e["type"]), json.dumps(data, sort_keys=True)))
+                cur = self.conn.execute("INSERT OR IGNORE INTO events VALUES (?, ?, ?, ?)",
+                                        (char, e["t"], str(e["type"]), json.dumps(data, sort_keys=True)))
                 added += cur.rowcount
         return added
 
-    def ingest_live(self, payload, now):
+    def ingest_live(self, char, payload, now):
         frame = payload.get("frame") or {}
         flags = frame.get("flags") or {}
-        snap = self.get("snapshot") or {}
+        snap = self.cget(char, "snapshot") or {}
         for part, fields in ((payload.get("identity"), IDENTITY_FIELDS),
                              (payload.get("zone"), ZONE_FIELDS)):
             if isinstance(part, dict):
@@ -192,32 +269,36 @@ class Store:
         for k in ("dead", "ghost", "combat", "resting"):
             snap[k] = bool(flags.get(k))
         snap["enemy"] = clean_enemy(payload.get("enemy")) if snap["combat"] else None
-        self.assume_full(snap, now, frame)
+        self.assume_full(char, snap, now, frame)
         snap["status"] = "offline" if flags.get("leaving") else "online"
         snap["t"] = frame.get("t") or now
 
-        history = self.add_events(payload.get("events")) > 0
+        history = self.add_events(char, payload.get("events")) > 0
         if "quests" in payload:
-            self.put("quests", {"t": now, "list": clean_quests(payload["quests"])})
+            self.cput(char, "quests", {"t": now, "list": clean_quests(payload["quests"])})
             history = True
-        history |= self.put_sheet(payload, now)
+        history |= self.put_sheet(char, payload, now)
         if snap.get("name"):
-            self.put("snapshot", snap)
-            self.put("updatedAt", now)
-            self.put("liveAt", now)
-            history |= self.sample_live(snap, now)
-        self.put("presence", {"online": snap["status"] == "online", "t": now})
+            if self.cget(char, "snapshot") is None:
+                history = True  # a new character: refresh the character list
+            self.cput(char, "snapshot", snap)
+            self.cput(char, "updatedAt", now)
+            self.cput(char, "liveAt", now)
+            self.put("current", char)
+            history |= self.sample_live(char, snap, now)
+        self.put("presence", {"online": snap["status"] == "online", "t": now, "character": char})
         return history
 
-    def assume_full(self, snap, now, frame):
+    def assume_full(self, char, snap, now, frame):
         """After FULL_AFTER seconds out of combat with no newer combat-log
         reading, health and power have regenerated: show them as full (rage
         as empty)."""
         snap["vitalsAssumed"] = False
-        if snap["combat"] or self.combat_ended_at is None:
-            self.combat_ended_at = None if snap["combat"] else now
+        ended = self.combat_ended_at.get(char)
+        if snap["combat"] or ended is None:
+            self.combat_ended_at[char] = None if snap["combat"] else now
             return
-        if snap["dead"] or snap["ghost"] or now - self.combat_ended_at < FULL_AFTER:
+        if snap["dead"] or snap["ghost"] or now - ended < FULL_AFTER:
             return
         if snap["vitalsAt"] and now - snap["vitalsAt"] < FULL_AFTER:
             return
@@ -231,27 +312,38 @@ class Store:
         if snap["vitalsAssumed"]:
             snap["vitalsAt"] = None
 
-    def sample_live(self, s, now):
+    def sample_live(self, char, s, now):
         """Adds trail and XP points from live data at a modest rate."""
         added = False
         if s.get("x") is not None and s.get("mapID"):
-            last = self.last_position
+            last = self.last_position.get(char)
             moved = (not last or last[1] != s["mapID"]
                      or abs(last[2] - s["x"]) > 0.002 or abs(last[3] - s["y"]) > 0.002)
             if moved and (not last or now - last[0] >= POSITION_EVERY):
-                self.conn.execute("INSERT OR IGNORE INTO positions VALUES (?, ?, ?, ?, ?)",
-                                  (now, s["mapID"], s.get("map"), s["x"], s["y"]))
-                self.last_position = (now, s["mapID"], s["x"], s["y"])
+                self.conn.execute("INSERT OR IGNORE INTO positions VALUES (?, ?, ?, ?, ?, ?)",
+                                  (char, now, s["mapID"], s.get("map"), s["x"], s["y"]))
+                self.last_position[char] = (now, s["mapID"], s["x"], s["y"])
                 added = True
         if s.get("xp") is not None and s.get("xpMax"):
-            last = self.last_xp
+            last = self.last_xp.get(char)
             key = (s["level"], s["xp"])
             if not last or (last[1] != key and (key[0] != last[1][0] or now - last[0] >= XP_EVERY)):
-                self.conn.execute("INSERT OR IGNORE INTO xp VALUES (?, ?, ?, ?)",
-                                  (now, s["level"], s["xp"], s["xpMax"]))
-                self.last_xp = (now, key)
+                self.conn.execute("INSERT OR IGNORE INTO xp VALUES (?, ?, ?, ?, ?)",
+                                  (char, now, s["level"], s["xp"], s["xpMax"]))
+                self.last_xp[char] = (now, key)
                 added = True
         return added
+
+    def payload_character(self, payload):
+        """Which character an upload is about: named by the companion, else
+        from its identity or snapshot, else the one played most recently."""
+        char = payload.get("character")
+        if isinstance(char, str) and 0 < len(char) <= 100:
+            return char
+        for part in (payload.get("identity"), payload.get("snapshot")):
+            if isinstance(part, dict) and char_key(part.get("name"), part.get("realm")):
+                return char_key(part["name"], part["realm"])
+        return self.get("current")
 
     def ingest(self, payload):
         kind = payload.get("kind")
@@ -259,89 +351,110 @@ class Store:
         history = False
         with self.lock, self.conn:
             if kind == "presence":
-                self.put("presence", {"online": bool(payload.get("online")), "t": now})
+                presence = self.get("presence") or {}
+                self.put("presence", {"online": bool(payload.get("online")), "t": now,
+                                      "character": presence.get("character")})
             elif kind == "live":
-                history = self.ingest_live(payload, now)
+                char = self.payload_character(payload)
+                if not char:
+                    raise ValueError("live data without a character")
+                history = self.ingest_live(char, payload, now)
             elif kind == "snapshot":
                 snap = {k: v for k, v in (payload.get("snapshot") or {}).items()
                         if k in SNAPSHOT_FIELDS}
                 if not snap.get("name"):
                     raise ValueError("snapshot without character name")
+                char = self.payload_character(payload)
                 # The saved file has no surname; keep the one live data gave us.
-                old = self.get("snapshot") or {}
+                old = self.cget(char, "snapshot") or {}
                 if old.get("name") == snap["name"] and old.get("surname"):
                     snap["surname"] = old["surname"]
                 # While live data flows it is fresher than any saved file.
-                live = now - (self.get("liveAt") or 0) < LIVE_STALE
+                live = now - (self.cget(char, "liveAt") or 0) < LIVE_STALE
                 if not live:
-                    self.put("snapshot", snap)
-                    self.put("updatedAt", now)
+                    self.cput(char, "snapshot", snap)
+                    self.cput(char, "updatedAt", now)
+                    self.put("current", char)
                     online = snap.get("status") == "online" and payload.get("gameRunning") is not False
-                    self.put("presence", {"online": online, "t": now})
+                    self.put("presence", {"online": online, "t": now, "character": char})
                     if payload.get("quests") is not None:
-                        self.put("quests", {"t": now, "list": clean_quests(payload["quests"])})
-                    self.put_sheet(payload, now)
+                        self.cput(char, "quests", {"t": now, "list": clean_quests(payload["quests"])})
+                    self.put_sheet(char, payload, now)
                 history = True
-                self.add_events(payload.get("events"))
+                self.add_events(char, payload.get("events"))
                 for p in payload.get("positions") or []:
                     if isinstance(p, dict) and isinstance(p.get("t"), int) and "x" in p:
                         self.conn.execute(
-                            "INSERT OR IGNORE INTO positions VALUES (?, ?, ?, ?, ?)",
-                            (p["t"], p.get("mapID"), p.get("map"), p.get("x"), p.get("y")))
+                            "INSERT OR IGNORE INTO positions VALUES (?, ?, ?, ?, ?, ?)",
+                            (char, p["t"], p.get("mapID"), p.get("map"), p.get("x"), p.get("y")))
                 for s in payload.get("xp") or []:
                     if isinstance(s, dict) and isinstance(s.get("t"), int):
-                        self.conn.execute("INSERT OR IGNORE INTO xp VALUES (?, ?, ?, ?)",
-                                          (s["t"], s.get("level"), s.get("xp"), s.get("xpMax")))
+                        self.conn.execute("INSERT OR IGNORE INTO xp VALUES (?, ?, ?, ?, ?)",
+                                          (char, s["t"], s.get("level"), s.get("xp"), s.get("xpMax")))
             else:
                 raise ValueError(f"unknown kind {kind!r}")
         self.notify(history)
 
-    def put_sheet(self, payload, now):
+    def put_sheet(self, char, payload, now):
         """Stores gear and professions; returns whether either changed."""
         changed = False
         for key, clean in (("gear", clean_gear), ("professions", clean_professions)):
             if payload.get(key) is None:
                 continue
             items = clean(payload[key])
-            old = self.get(key) or {}
+            old = self.cget(char, key) or {}
             if old.get("items") != items:
                 changed = True
-            self.put(key, {"t": now if old.get("items") != items else old.get("t", now), "items": items})
+            self.cput(char, key, {"t": now if old.get("items") != items else old.get("t", now), "items": items})
         return changed
 
-    def state(self, quests=True):
+    def online(self, presence, now):
+        return bool(presence.get("online")) and now - presence.get("t", 0) < PRESENCE_TIMEOUT
+
+    def character_list(self):
+        """Every character with saved data, most recently played first."""
+        now = int(time.time())
+        with self.lock:
+            presence = self.get("presence") or {}
+            out = []
+            for char in self.characters():
+                snap = self.cget(char, "snapshot") or {}
+                out.append({"id": char, **{k: snap.get(k) for k in CHARACTER_FIELDS},
+                            "online": self.online(presence, now) and presence.get("character") == char,
+                            "updatedAt": self.cget(char, "updatedAt")})
+        return sorted(out, key=lambda c: c["updatedAt"] or 0, reverse=True)
+
+    def state(self, char, quests=True):
         with self.lock:
             presence = self.get("presence") or {"online": False, "t": 0}
-            snapshot = self.get("snapshot")
-            updated = self.get("updatedAt")
-            live_at = self.get("liveAt") or 0
-            quest_state = self.get("quests") if quests else None
-            gear = self.get("gear") if quests else None
-            professions = self.get("professions") if quests else None
+            snapshot = self.cget(char, "snapshot")
+            updated = self.cget(char, "updatedAt")
+            live_at = self.cget(char, "liveAt") or 0
+            extra = {k: self.cget(char, k) for k in ("quests", "gear", "professions")} if quests else {}
         now = int(time.time())
-        online = presence["online"] and now - presence["t"] < PRESENCE_TIMEOUT
+        playing = presence.get("character") == char
+        online = playing and self.online(presence, now)
         state = {
             "serverTime": now,
+            "character": char,
             "online": online,
             "live": online and now - live_at < LIVE_STALE,
-            "presenceAt": presence["t"],
+            "presenceAt": presence["t"] if playing else updated,
             "updatedAt": updated,
             "snapshot": snapshot,
         }
-        if quests:
-            state["quests"] = quest_state
-            state["gear"] = gear
-            state["professions"] = professions
+        state.update(extra)
         return state
 
-    def history(self, limit_positions=500, limit_events=150):
+    def history(self, char, limit_positions=500, limit_events=150):
         with self.lock:
             positions = self.conn.execute(
-                "SELECT t, mapID, map, x, y FROM positions ORDER BY t DESC LIMIT ?",
-                (limit_positions,)).fetchall()
-            xp = self.conn.execute("SELECT t, level, xp, xpMax FROM xp ORDER BY t").fetchall()
+                "SELECT t, mapID, map, x, y FROM positions WHERE char=? ORDER BY t DESC LIMIT ?",
+                (char, limit_positions)).fetchall()
+            xp = self.conn.execute("SELECT t, level, xp, xpMax FROM xp WHERE char=? ORDER BY t",
+                                   (char,)).fetchall()
             events = self.conn.execute(
-                "SELECT data FROM events ORDER BY t DESC LIMIT ?", (limit_events,)).fetchall()
+                "SELECT data FROM events WHERE char=? ORDER BY t DESC LIMIT ?", (char, limit_events)).fetchall()
         return {
             "positions": [dict(zip(("t", "mapID", "map", "x", "y"), r)) for r in reversed(positions)],
             "xp": [dict(zip(("t", "level", "xp", "xpMax"), r)) for r in xp],
@@ -406,17 +519,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlparse(self.path)
-        if url.path == "/api/state":
-            return self.send_json(STORE.state())
-        if url.path == "/api/history":
-            return self.send_json(STORE.history())
-        if url.path == "/api/stream":
-            return self.stream()
+        if url.path == "/api/characters":
+            return self.send_json(STORE.character_list())
+        if url.path in ("/api/state", "/api/history", "/api/stream"):
+            char = STORE.resolve((parse_qs(url.query).get("c") or [None])[0])
+            if url.path == "/api/state":
+                return self.send_json(STORE.state(char) if char else {"serverTime": int(time.time())})
+            if url.path == "/api/history":
+                return self.send_json(STORE.history(char) if char else {"positions": [], "xp": [], "events": []})
+            return self.stream(char)
         if url.path.startswith("/api/"):
             return self.error(HTTPStatus.NOT_FOUND, "not found")
         return self.static(url.path)
 
-    def stream(self):
+    def stream(self, char):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")
@@ -436,7 +552,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(f"event: update\ndata: {seen_history}\n\n".encode())
                 elif STORE.live_version != seen_live:
                     seen_live = STORE.live_version
-                    state = json.dumps(STORE.state(quests=False), separators=(",", ":"))
+                    state = json.dumps(STORE.state(char, quests=False) if char else {},
+                                       separators=(",", ":"))
                     self.wfile.write(f"event: live\ndata: {state}\n\n".encode())
                 else:
                     self.wfile.write(b": ping\n\n")

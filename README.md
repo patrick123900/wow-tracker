@@ -42,6 +42,18 @@ The surname (Forever characters have first and last names) also comes from the c
 you as `First-Surname-Realm`; the addon API only returns the first name. The log file grows while you play;
 delete old `Logs/WoWCombatLog-*.txt` files now and then. `/ft debug` lists what's secret right now.
 
+## Several characters
+
+Each character is tracked separately, keyed by `Name-Realm`: its own journal, trail, XP curve, quests, gear and
+professions. The addon keeps them apart in its saved file (`ForeverTrackerDB.chars`; settings stay account-wide),
+the companion labels every upload with the character it's about, and the backend stores history per character. The
+site lists every character in a panel on the left (the one you're playing shows as online), and `?c=Name-Realm`
+links to one directly. After a loading screen or the character list the companion waits for the strip to say who
+is playing before it sends anything live, so a newly logged-in character's data never lands on the previous one.
+
+Data from before per-character tracking is moved to the character it belongs to (the one named in its last
+snapshot): by the addon on the first login of any character, and by the backend on its first start.
+
 ## In-game
 
 Open the options with `/ft` (also under *Options → AddOns → Forever Tracker*, plus a keybinding).

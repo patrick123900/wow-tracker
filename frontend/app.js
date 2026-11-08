@@ -18,6 +18,9 @@ const $ = (id) => document.getElementById(id);
 const fmt = new Intl.NumberFormat();
 let state = null;
 let history = { positions: [], xp: [], events: [] };
+let characters = [];
+let selected = new URLSearchParams(location.search).get("c"); // "Name-Realm", or the last played
+let stream = null;
 let journalFilter = "all";
 let mapIndex = {};
 let shownMap = null;
@@ -639,16 +642,69 @@ function renderAll() {
   renderJournal();
 }
 
+// --- characters ------------------------------------------------------------------
+
+const forChar = () => (selected ? `?c=${encodeURIComponent(selected)}` : "");
+
+function renderRoster() {
+  $("roster").innerHTML = characters.map((c) => {
+    const color = CLASS_COLORS[c.classToken] || "var(--gold)";
+    const seen = c.online ? "Online now" : c.updatedAt ? `Seen ${ago(c.updatedAt)}` : "";
+    return `<button type="button" data-id="${esc(c.id)}" class="${c.id === selected ? "on" : ""}" style="--c:${color}"
+        title="${esc([c.name, c.surname].filter(Boolean).join(" "))} · ${esc(c.realm || "")}">
+      <span class="mini-crest${c.online ? " online" : ""}">${portraitHtml(c)}</span>
+      <span class="label"><b>${esc(c.name)}</b>
+        <span>${c.level ? `Level ${c.level} ` : ""}${esc(c.class || "")}</span>
+        <span class="seen${c.online ? " online" : ""}">${seen}</span></span>
+    </button>`;
+  }).join("");
+}
+
+async function loadCharacters() {
+  try {
+    characters = await fetch("api/characters").then((r) => (r.ok ? r.json() : []));
+  } catch (err) {
+    console.error("character list failed", err);
+  }
+  renderRoster();
+}
+
+function selectCharacter(id) {
+  if (!id || id === selected) return;
+  selected = id;
+  const url = new URL(location.href);
+  url.searchParams.set("c", id);
+  window.history.replaceState(null, "", url); // `history` here is the trail data
+  state = null;
+  history = { positions: [], xp: [], events: [] };
+  shownMap = null;
+  delete $("map-me").dataset.placed; // no gliding from the last character's spot
+  renderRoster();
+  load();
+  connect();
+}
+
+$("roster").addEventListener("click", (ev) => {
+  const btn = ev.target.closest("button[data-id]");
+  if (btn) selectCharacter(btn.dataset.id);
+});
+
 // --- data --------------------------------------------------------------------
 
 async function load() {
+  const asked = selected;
   try {
     const [st, hist] = await Promise.all([
-      fetch("api/state").then((r) => r.json()),
-      fetch("api/history").then((r) => r.json()),
+      fetch(`api/state${forChar()}`).then((r) => r.json()),
+      fetch(`api/history${forChar()}`).then((r) => r.json()),
     ]);
+    if (asked !== selected) return; // switched character while this was loading
     state = st;
     history = hist;
+    if (!selected && st.character) {
+      selected = st.character; // the last played, chosen by the server
+      renderRoster();
+    }
     renderAll();
   } catch (err) {
     console.error("load failed", err);
@@ -657,8 +713,9 @@ async function load() {
 
 function connect() {
   if (!window.EventSource) return;
-  const es = new EventSource("api/stream");
-  es.addEventListener("update", load);
+  stream?.close();
+  const es = stream = new EventSource(`api/stream${forChar()}`);
+  es.addEventListener("update", () => { load(); loadCharacters(); });
   es.addEventListener("live", (ev) => {
     const { quests, gear, professions } = state || {};
     state = JSON.parse(ev.data);
@@ -702,6 +759,9 @@ fetch("maps/index.json")
   .then((r) => (r.ok ? r.json() : {}))
   .catch(() => ({}))
   .then((idx) => { mapIndex = idx; })
+  .then(() => loadCharacters())
   .finally(() => { load(); connect(); });
-// Presence expires server-side without a push, so re-check now and then.
+// Presence expires server-side without a push, so re-check now and then; the
+// character list also shows who's online.
 setInterval(load, 60_000);
+setInterval(loadCharacters, 15_000);
