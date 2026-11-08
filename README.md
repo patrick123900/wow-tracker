@@ -38,17 +38,15 @@ reads). The client writes your current health and power there on every combat ac
 follows the file and keeps only lines for your own character (no data about anyone nearby leaves your PC). The page
 labels these values with their age, since nothing is logged out of combat. After 30 seconds out of combat with no
 newer reading (`FT_FULL_AFTER` on the backend), health and mana are shown as full, since they will have regenerated.
-The surname (Forever characters have first and last names) also comes from the combat log, where your own lines name
-you as `First-Surname-Realm`; the addon API only returns the first name. The log file grows while you play;
+The log file grows while you play;
 delete old `Logs/WoWCombatLog-*.txt` files now and then. `/ft debug` lists what's secret right now.
 
 ## Several characters
 
 Each character is tracked separately: its own journal, trail, XP curve, quests, gear and professions. Characters
 are keyed by their game ID (`Player-6856-009ABB43`), never by name: Forever characters have a first and a last name,
-and many can share the first. The site always shows both names; the last name comes from the game's combat log
-(the addon API only gives the first), so a brand-new character shows it once the game has written its first log
-lines. The addon keeps them apart in its saved file (`ForeverTrackerDB.chars`; settings stay account-wide),
+and many can share the first. The site always shows both names: in Forever, `UnitName` returns the first and last
+name as its two values (where other clients put the realm), and the addon sends both. The addon keeps them apart in its saved file (`ForeverTrackerDB.chars`; settings stay account-wide),
 the companion labels every upload with the character it's about, and the backend stores history per character. The
 site lists every character in a panel on the left (the one you're playing shows as online), and `?c=<game ID>`
 links to one directly. After a loading screen or the character list the companion waits for the strip to say who
