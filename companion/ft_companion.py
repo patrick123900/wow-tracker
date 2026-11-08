@@ -355,8 +355,10 @@ class Companion:
             log(f"could not parse {path}: {exc}")
             return
         self.path, self.mtime = path, mtime
-        running = game_running()
-        self.pending = self.build_payload(running)
+        # Online means in the world, where the strip shows: the saved status can
+        # be stale (e.g. the game was closed without logging out).
+        in_world = game_running() is not False and self.is_live(time.time())
+        self.pending = self.build_payload(in_world)
         log(f"saved variables changed ({path}); "
             + ("sending update" if self.pending else "tracking off, not sending"))
 
@@ -473,6 +475,7 @@ class Companion:
             self.quests_dirty = False
             self.sheet_dirty = False
             self.last_heartbeat = now
+            self.was_running = True  # in the world; leaving it reports offline
 
     # --- main loop -----------------------------------------------------------
 
@@ -533,14 +536,12 @@ class Companion:
 
         if self.db is None or not self.sharing() or self.is_live(now):
             return
-        if now - self.last_heartbeat < self.heartbeat_every:
-            return
-        snap = self.character()[0].get("snapshot") or {}
-        online = bool(self.game_up) and snap.get("status") == "online"
-        if online or self.was_running:
-            if self.send({"kind": "presence", "online": online}):
+        # Not in the world (character select, login screen, logged out, or the
+        # strip not visible): offline. Said once, right after leaving the world.
+        if self.was_running is not False:
+            if self.send({"kind": "presence", "online": False}):
                 self.last_heartbeat = now
-                self.was_running = online
+                self.was_running = False
 
     def run(self):
         log("Forever Tracker companion started")
