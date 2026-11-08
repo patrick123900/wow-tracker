@@ -11,7 +11,7 @@ local ADDON = ...
 local FT = {}
 _G.ForeverTracker = FT
 
-local SCHEMA = 3 -- 3: history kept per character in db.chars
+local SCHEMA = 4 -- 3: history per character in db.chars; 4: keyed by the character's game ID
 local MAX_POSITIONS = 400
 local MAX_XP = 600
 local MAX_EVENTS = 200
@@ -248,31 +248,52 @@ end
 
 local PER_CHARACTER = { "events", "positions", "xp", "snapshot", "quests", "gear", "professions" }
 
--- Picks this character's part of the saved table (by "Name-Realm"). Before
--- schema 3 everything was stored at the top level for one character; that
--- history is moved to the character it belongs to (the one in its snapshot),
--- whichever character logs in first.
+-- Older saves keyed characters by "Name-Realm" (or kept one character's data
+-- at the top level). Forever characters have a first and a last name, and many
+-- can share a first name, so characters are now keyed by their game ID. An old
+-- entry is claimed only by a character with the same first name, realm, race
+-- and class at its level or higher: a new character can't take an old one's
+-- history.
+local function claims(snap, name, realm, race, classToken, level)
+	return snap and snap.name == name and (snap.realm or realm) == realm and snap.race == race
+		and snap.classToken == classToken and (snap.level or 0) <= (level or 0)
+end
+
+-- Picks this character's part of the saved table.
 local function selectCharacter()
 	if char then return true end
 	local name, realm = read(nil, UnitName, "player"), read(nil, GetRealmName)
+	local guid = read(nil, UnitGUID, "player")
 	if not name or name == "" or name == UNKNOWNOBJECT or not realm or realm == "" then return false end
-	local key = name .. "-" .. realm
+	if type(guid) ~= "string" or not guid:find("^Player%-") then return false end
+	local race, level = read(nil, UnitRace, "player"), read(nil, UnitLevel, "player")
+	local _, classToken = UnitClass("player")
 	if db.events or db.snapshot then
+		-- Before per-character storage: keep it under its old name key for now.
 		local s = db.snapshot
-		local owner = s and s.name and (s.name .. "-" .. (s.realm or realm)) or key
-		local old = db.chars[owner] or {}
+		local legacy = s and s.name and (s.name .. "-" .. (s.realm or realm)) or ("?-" .. realm)
+		local old = db.chars[legacy] or {}
 		for _, k in ipairs(PER_CHARACTER) do
 			if old[k] == nil then old[k] = db[k] end
 			db[k] = nil
 		end
-		db.chars[owner] = old
+		db.chars[legacy] = old
 	end
-	char = db.chars[key] or {}
+	if not db.chars[guid] then
+		for key, entry in pairs(db.chars) do
+			if not key:find("^Player%-") and claims(entry.snapshot, name, realm, race, classToken, level) then
+				db.chars[guid], db.chars[key] = entry, nil
+				break
+			end
+		end
+	end
+	char = db.chars[guid] or {}
+	char.guid = guid
 	char.events = char.events or {}
 	char.positions = char.positions or {}
 	char.xp = char.xp or {}
-	db.chars[key] = char
-	db.current = key
+	db.chars[guid] = char
+	db.current = guid
 	FT.char = char
 	return true
 end

@@ -207,6 +207,15 @@ def endpoint_url(endpoint):
     return f"http://{ip}:{int(m.group(2) or 8787)}/api/ingest"
 
 
+def character_key(identity):
+    """Characters are keyed by their game GUID: Forever characters have a
+    first and a last name, and many can share the first one."""
+    guid = identity.get("guid")
+    if isinstance(guid, str) and guid.startswith("Player-"):
+        return guid
+    return f"{identity['name']}-{identity['realm']}"
+
+
 def rows(payload):
     """The strip's compact lists; an empty one arrives as {}."""
     return [r for r in payload if isinstance(r, list)] if isinstance(payload, list) else []
@@ -387,8 +396,8 @@ class Companion:
         if kind == "I":
             if isinstance(payload, dict) and payload.get("name") and payload.get("realm"):
                 self.identity = payload
-                if self.combat_log:
-                    self.combat_log.follow(payload["name"])
+                if self.combat_log and str(payload.get("guid", "")).startswith("Player-"):
+                    self.combat_log.follow(payload["guid"])
         elif kind == "Z":
             self.zone = payload
         elif kind == "Q":
@@ -447,7 +456,7 @@ class Companion:
         if not flags["sharing"] or not self.identity:
             return  # nothing to share, or not yet known which character this is
         self.last_hidden_post = 0
-        character = f"{self.identity['name']}-{self.identity['realm']}"
+        character = character_key(self.identity)
         payload = {"kind": "live", "character": character, "frame": self.frame, "identity": self.identity,
                    "zone": self.zone, "events": self.events}
         # Health/power from the game's combat log, only while the in-game
@@ -460,7 +469,7 @@ class Companion:
             if self.combat_log.vitals:
                 payload["vitals"] = self.combat_log.vitals
             payload["enemy"] = self.enemy(flags)
-            surname = self.identity and self.combat_log.surname_for(self.identity.get("name"))
+            surname = self.combat_log.surname(self.identity.get("guid"))
             if surname:
                 payload["identity"] = {**self.identity, "surname": surname}
         if self.quests_dirty:

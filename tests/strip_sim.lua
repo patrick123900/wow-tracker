@@ -1,16 +1,19 @@
 -- Loads the addon against stubbed WoW APIs, simulates a few seconds of play
 -- and writes every pixel-strip frame (171 bytes each) to a binary file.
--- Usage: lua tests/strip_sim.lua <frames.bin> [saved-variables.lua [character [realm]]]
+-- Usage: lua tests/strip_sim.lua <frames.bin> [saved-variables.lua [name [realm [guid [race class level]]]]]
 -- With a SavedVariables file, starts from that saved data (as the game would)
 -- and prints how it's stored per character afterwards.
 
 local out, savedFile = arg[1], arg[2]
 local simName, simRealm = arg[3] or "Pattes", arg[4] or "Test Realm"
+local simGUID = arg[5] or "Player-1-00000001"
+local simRace, simClass = arg[6] or "Dwarf", arg[7] or "SHAMAN"
+local simLevel = tonumber(arg[8]) or 3
 if savedFile then dofile(savedFile) end -- defines ForeverTrackerDB
 local clock, gtime = 1793890000, 0
 local SECRET = setmetatable({}, { __tostring = function() return "<secret>" end })
 
-local S = { level = 3, xp = 120, xpMax = 1100, x = 0.2971, y = 0.7166, zone = "Dun Morogh",
+local S = { level = simLevel, xp = 120, xpMax = 1100, x = 0.2971, y = 0.7166, zone = "Dun Morogh",
 	subzone = "Coldridge Valley", mapID = 1426, hp = SECRET, hpMax = 92, mana = 70, manaMax = 110 }
 
 function issecretvalue(v) return v == SECRET end
@@ -65,8 +68,9 @@ C_QuestLog = {
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) print("[chat] " .. m) end }
 SlashCmdList = {}
 UISpecialFrames = {}
-function UnitClass() return "Shaman", "SHAMAN" end
-function UnitRace() return "Dwarf" end
+function UnitClass() return simClass:sub(1, 1) .. simClass:sub(2):lower(), simClass end
+function UnitRace() return simRace end
+function UnitGUID() return simGUID end
 function UnitLevel() return S.level end
 function GetMaxPlayerLevel() return 60 end
 function GetGuildInfo() return nil end

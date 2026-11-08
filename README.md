@@ -44,15 +44,19 @@ delete old `Logs/WoWCombatLog-*.txt` files now and then. `/ft debug` lists what'
 
 ## Several characters
 
-Each character is tracked separately, keyed by `Name-Realm`: its own journal, trail, XP curve, quests, gear and
-professions. The addon keeps them apart in its saved file (`ForeverTrackerDB.chars`; settings stay account-wide),
+Each character is tracked separately: its own journal, trail, XP curve, quests, gear and professions. Characters
+are keyed by their game ID (`Player-6856-009ABB43`), never by name: Forever characters have a first and a last name,
+and many can share the first. The site always shows both names; the last name comes from the game's combat log
+(the addon API only gives the first), so a brand-new character shows it once the game has written its first log
+lines. The addon keeps them apart in its saved file (`ForeverTrackerDB.chars`; settings stay account-wide),
 the companion labels every upload with the character it's about, and the backend stores history per character. The
-site lists every character in a panel on the left (the one you're playing shows as online), and `?c=Name-Realm`
+site lists every character in a panel on the left (the one you're playing shows as online), and `?c=<game ID>`
 links to one directly. After a loading screen or the character list the companion waits for the strip to say who
 is playing before it sends anything live, so a newly logged-in character's data never lands on the previous one.
 
-Data from before per-character tracking is moved to the character it belongs to (the one named in its last
-snapshot): by the addon on the first login of any character, and by the backend on its first start.
+Data from before per-character tracking (or keyed by `Name-Realm`) is claimed by the character it belongs to: only
+one with the same first name, realm, race and class, at that data's level or higher, so a new character can never
+take an older one's history. The addon does this at login, the backend when the character's data first arrives.
 
 ## In-game
 

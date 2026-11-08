@@ -118,8 +118,11 @@ def clean_professions(items):
 
 # --- storage -----------------------------------------------------------------
 #
-# Each character ("Name-Realm") has its own history rows and its own kv
-# entries ("char:<key>:snapshot" etc). Global kv: "presence" (online, t, and
+# Each character has its own history rows and its own kv entries
+# ("char:<key>:snapshot" etc), keyed by its game GUID ("Player-6856-009ABB43"):
+# Forever characters have a first and a last name, and many can share the
+# first. (Before that, keys were "Name-Realm"; "alias:<old key>" points such a
+# key at the GUID that claimed its data.) Global kv: "presence" (online, t, and
 # which character) and "current" (the character played most recently).
 
 CHAR_KV = ("snapshot", "quests", "gear", "professions", "liveAt", "updatedAt")
@@ -219,6 +222,8 @@ class Store:
     def resolve(self, char):
         """The character asked for, or the one played most recently."""
         with self.lock:
+            if char and not char.startswith("Player-"):
+                char = self.get(f"alias:{char}") or char  # an old link
             if char and self.cget(char, "snapshot") is not None:
                 return char
             return self.get("current")
@@ -338,12 +343,45 @@ class Store:
         """Which character an upload is about: named by the companion, else
         from its identity or snapshot, else the one played most recently."""
         char = payload.get("character")
-        if isinstance(char, str) and 0 < len(char) <= 100:
-            return char
-        for part in (payload.get("identity"), payload.get("snapshot")):
-            if isinstance(part, dict) and char_key(part.get("name"), part.get("realm")):
-                return char_key(part["name"], part["realm"])
-        return self.get("current")
+        if not (isinstance(char, str) and 0 < len(char) <= 100):
+            char = None
+            for part in (payload.get("identity"), payload.get("snapshot")):
+                if isinstance(part, dict) and char_key(part.get("name"), part.get("realm")):
+                    char = char_key(part["name"], part["realm"])
+                    break
+        if char and not char.startswith("Player-"):
+            char = self.get(f"alias:{char}") or char
+        return char or self.get("current")
+
+    def claim(self, guid, who, level):
+        """Moves an old "Name-Realm" character's data to its GUID: only to a
+        character with the same first name, realm, race and class at its level
+        or higher, so a new character can't take an old one's history."""
+        if not guid.startswith("Player-") or self.cget(guid, "snapshot") is not None or not isinstance(who, dict):
+            return False
+        for old in self.characters():
+            snap = self.cget(old, "snapshot") or {}
+            if old.startswith("Player-") or not all(
+                    snap.get(k) == who.get(k) for k in ("name", "realm", "race", "classToken")):
+                continue
+            if not isinstance(level, int) or (snap.get("level") or 0) > level:
+                continue
+            for table in ("events", "positions", "xp"):
+                self.conn.execute(f"UPDATE {table} SET char=? WHERE char=?", (guid, old))
+            for k in CHAR_KV:
+                value = self.cget(old, k)
+                if value is not None:
+                    self.cput(guid, k, value)
+                    self.conn.execute("DELETE FROM kv WHERE key=?", (f"char:{old}:{k}",))
+            self.put(f"alias:{old}", guid)
+            if self.get("current") == old:
+                self.put("current", guid)
+            presence = self.get("presence") or {}
+            if presence.get("character") == old:
+                self.put("presence", {**presence, "character": guid})
+            print(f"{old} is {guid}: moved its history", flush=True)
+            return True
+        return False
 
     def ingest(self, payload):
         kind = payload.get("kind")
@@ -358,13 +396,15 @@ class Store:
                 char = self.payload_character(payload)
                 if not char:
                     raise ValueError("live data without a character")
-                history = self.ingest_live(char, payload, now)
+                history = self.claim(char, payload.get("identity"), (payload.get("frame") or {}).get("level"))
+                history |= self.ingest_live(char, payload, now)
             elif kind == "snapshot":
                 snap = {k: v for k, v in (payload.get("snapshot") or {}).items()
                         if k in SNAPSHOT_FIELDS}
                 if not snap.get("name"):
                     raise ValueError("snapshot without character name")
                 char = self.payload_character(payload)
+                self.claim(char, snap, snap.get("level"))
                 # The saved file has no surname; keep the one live data gave us.
                 old = self.cget(char, "snapshot") or {}
                 if old.get("name") == snap["name"] and old.get("surname"):

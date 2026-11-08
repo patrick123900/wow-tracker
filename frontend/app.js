@@ -107,11 +107,10 @@ function mapSize(mapID) {
 function renderHero(s) {
   const color = CLASS_COLORS[s.classToken] || "var(--gold)";
   document.documentElement.style.setProperty("--class", color);
-  const fullName = [s.name, s.surname].filter(Boolean).join(" ");
-  document.title = `${fullName} · Forever Tracker`;
+  document.title = `${fullName(s)} · Forever Tracker`;
   const portrait = racePortrait(s);
   if (changed("crest", [portrait, s.class])) $("crest").innerHTML = portraitHtml(s);
-  $("name").textContent = fullName;
+  $("name").textContent = fullName(s);
   $("realm").textContent = [s.realm, s.faction].filter(Boolean).join(" · ") || "World of Warcraft: Forever";
   $("subtitle").textContent = [`Level ${s.level ?? "?"} ${s.race ?? ""} ${s.class ?? ""}`, s.guild && `<${s.guild}>`]
     .filter(Boolean).join("  ·  ");
@@ -291,7 +290,7 @@ function renderMe(s) {
   me.classList.toggle("jump", mapChanged || !me.dataset.placed);
   me.style.transform = `translate(${s.x * W}px, ${s.y * H}px)`;
   me.dataset.placed = "1";
-  me.dataset.tip = `${[s.name, s.surname].filter(Boolean).join(" ")} · ${s.zone || ""}`;
+  me.dataset.tip = `${fullName(s)} · ${s.zone || ""}`;
   if (mapChanged) renderTrail(s);
 }
 
@@ -458,6 +457,13 @@ function itemIcon(id) {
       .catch(() => null));
   }
   return iconLookups.get(id);
+}
+
+// Forever characters have a first and a last name; many share the first.
+// (The last name comes from the game's combat log, so a brand-new character
+// may briefly have only its first name.)
+function fullName(c) {
+  return [c.name, c.surname].filter(Boolean).join(" ");
 }
 
 function racePortrait(s) {
@@ -651,9 +657,9 @@ function renderRoster() {
     const color = CLASS_COLORS[c.classToken] || "var(--gold)";
     const seen = c.online ? "Online now" : c.updatedAt ? `Seen ${ago(c.updatedAt)}` : "";
     return `<button type="button" data-id="${esc(c.id)}" class="${c.id === selected ? "on" : ""}" style="--c:${color}"
-        title="${esc([c.name, c.surname].filter(Boolean).join(" "))} · ${esc(c.realm || "")}">
+        title="${esc(fullName(c))} · ${esc(c.realm || "")}">
       <span class="mini-crest${c.online ? " online" : ""}">${portraitHtml(c)}</span>
-      <span class="label"><b>${esc(c.name)}</b>
+      <span class="label"><b>${esc(fullName(c))}</b>
         <span>${c.level ? `Level ${c.level} ` : ""}${esc(c.class || "")}</span>
         <span class="seen${c.online ? " online" : ""}">${seen}</span></span>
     </button>`;

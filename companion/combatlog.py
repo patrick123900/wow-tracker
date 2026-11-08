@@ -50,9 +50,9 @@ class CombatLogTail:
         self.offset = 0
         self.partial = b""
         self.me = None          # player GUID, learned from "mine + player" source flags
-        self.expect = None      # first name of the character being played (from the addon)
+        self.followed = None    # GUID of the character being played, from the addon
         self.full_name = None   # e.g. "Pattes-Heals-PvP-EU": first name, surname, realm
-        self.surnames = {}      # first name -> surname, kept across log files
+        self.surnames = {}      # GUID -> surname, kept across log files
         self.vitals = None      # latest {"t", "health", "healthMax", "power": {...}}
         # creature GUID -> {"name", "t" (last health), "fought" (last blow with us), "health", "healthMax", "dead"}
         self.foes = {}
@@ -69,7 +69,7 @@ class CombatLogTail:
             return
         size = os.path.getsize(path)
         if path != self.path or size < self.offset:
-            self.path, self.partial, self.me = path, b"", None
+            self.path, self.partial, self.me, self.full_name = path, b"", self.followed, None
             self.offset = max(0, size - BACKFILL)
             skip_first = self.offset > 0
         else:
@@ -89,24 +89,22 @@ class CombatLogTail:
         if self.me is None and skip_first:
             self.learn_identity(path)
 
-    def mine(self, name):
-        """A "First-Surname-Realm" log name belongs to the character being
-        played (any, until the addon has said who that is)."""
-        return self.expect is None or name.strip('"').split("-")[0] == self.expect
-
-    def follow(self, first_name):
-        """Switches to another character: forget the last one's GUID, health
-        and fights, and find the new one in the log."""
-        if first_name == self.expect:
+    def follow(self, guid):
+        """Follows the character with this GUID (the addon's and the log's
+        GUIDs for players match): forget the last one's health and fights,
+        and find this one's full name in the log."""
+        if guid == self.followed:
             return
-        self.expect = first_name
-        self.me, self.full_name, self.vitals, self.foes = None, None, None, {}
+        self.followed = self.me = guid
+        self.full_name, self.vitals, self.foes = None, None, {}
         if self.path:
             self.learn_identity(self.path)
+        if self.full_name is None and guid not in self.surnames:
+            self.find_name_in_older_logs(guid)
 
     def learn_identity(self, path):
-        """Finds our GUID and full name earlier in the log when the recent
-        backfill had no line of ours (e.g. after standing idle)."""
+        """Finds our full name (and our GUID, until the addon has said who we
+        are) earlier in the log when the recent backfill had no line of ours."""
         with open(path, "rb") as f:
             for raw in f:
                 if f.tell() > IDENTITY_SCAN:
@@ -118,17 +116,37 @@ class CombatLogTail:
                     flags = int(fields[3], 16)
                 except ValueError:
                     continue
-                if flags & MINE and flags & PLAYER and self.mine(fields[2]):
+                if fields[1] == self.me or (self.me is None and flags & MINE and flags & PLAYER):
                     self.me, self.full_name = fields[1], fields[2].strip('"')
                     return
 
-    def surname_for(self, first):
-        """The surname from the log's "First-Surname-Realm-Region" name, if the
-        first name matches the character the addon reports."""
+    def find_name_in_older_logs(self, guid, files=6):
+        """The full name of a character played before, from earlier logs
+        (newest first): the current log may have no line of ours yet."""
+        needle = f",{guid},\"".encode()
+        logs = sorted(glob.glob(os.path.join(self.wow_path, "_*_", "Logs", "WoWCombatLog*.txt")),
+                      key=os.path.getmtime, reverse=True)
+        for path in logs[:files]:
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+            except OSError:
+                continue
+            at = data.find(needle)
+            if at >= 0:
+                name = data[at + len(needle) - 1:].split(b",", 1)[0].decode("utf-8", "replace").strip('"')
+                parts = name.split("-")
+                if len(parts) >= 4:
+                    self.surnames[guid] = parts[1]
+                return
+
+    def surname(self, guid):
+        """The surname of the character with this GUID, from the log's
+        "First-Surname-Realm-Region" name."""
         parts = (self.full_name or "").split("-")
-        if first and len(parts) >= 4 and parts[0] == first:
-            self.surnames[first] = parts[1]
-        return self.surnames.get(first)
+        if guid and guid == self.me and len(parts) >= 4:
+            self.surnames[guid] = parts[1]
+        return self.surnames.get(guid)
 
     def enemy(self, target=None):
         """The creature to show as what you're fighting: the target when it's
@@ -175,14 +193,17 @@ class CombatLogTail:
             return
         if len(fields) < 4:
             return
-        # Learn our GUID from a line where we're the source.
+        # Learn our GUID (until the addon has said) and full name from a line
+        # where we're the source.
         if self.me is None and fields[1].startswith("Player-"):
             try:
                 flags = int(fields[3], 16)
             except ValueError:
                 flags = 0
-            if flags & MINE and flags & PLAYER and self.mine(fields[2]):
-                self.me, self.full_name = fields[1], fields[2]
+            if flags & MINE and flags & PLAYER:
+                self.me = fields[1]
+        if self.me and self.full_name is None and fields[1] == self.me:
+            self.full_name = fields[2]
         if self.me is None:
             return
         # A creature that died, or one on a line where it and we are source

@@ -144,6 +144,23 @@ function FT.CharacterDebug()
 		GetProfessions and "yes" or "no", tostring(n), table.concat(headers, ", ")))
 	FT.Print(string.format("professions read: %s; gear: %d items", list and #list or "unreadable",
 		#(FT.char and FT.char.gear or {})))
+	-- Which API (if any) gives Forever's full first-and-last name.
+	local names = {}
+	for _, probe in ipairs({
+		{ "UnitName", UnitName, "player" }, { "UnitFullName", UnitFullName, "player" },
+		{ "GetUnitName", GetUnitName, "player", true }, { "UnitNameUnmodified", UnitNameUnmodified, "player" },
+		{ "C_PlayerInfo.GetName", C_PlayerInfo and C_PlayerInfo.GetName, PlayerLocation and PlayerLocation:CreateFromUnit("player") },
+		{ "GetPlayerInfoByGUID", GetPlayerInfoByGUID, UnitGUID("player") },
+	}) do
+		local fn = probe[2]
+		if fn then
+			local res = { pcall(fn, select(3, unpack(probe))) }
+			local out = {}
+			for i = 2, #res do out[#out + 1] = tostring(safe(res[i]) or "?") end
+			names[#names + 1] = probe[1] .. "=" .. (res[1] and table.concat(out, "/") or "error")
+		end
+	end
+	FT.Print("names: " .. table.concat(names, "; "))
 end
 
 -- Journal entries for professions: when one is learned, every 5 points and
