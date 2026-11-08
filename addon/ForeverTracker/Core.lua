@@ -153,6 +153,14 @@ local function flag(name, fn, ...)
 	return v and true or false
 end
 
+-- Forever characters have a first and a last name: UnitName returns them as
+-- its two values (where other clients put the realm).
+local function surname()
+	local ok, _, last = pcall(UnitName, "player")
+	last = ok and safe(last)
+	if type(last) == "string" and last ~= "" and last ~= read(nil, GetRealmName) then return last end
+end
+
 function FT.BuildSnapshot()
 	local _, classToken = UnitClass("player")
 	local pos = FT.PlayerPosition() or {}
@@ -160,6 +168,7 @@ function FT.BuildSnapshot()
 		t = now(),
 		status = leaving and "offline" or "online",
 		name = read("name", UnitName, "player"),
+		surname = surname(),
 		realm = read("realm", GetRealmName),
 		faction = read("faction", UnitFactionGroup, "player"),
 		race = read("race", UnitRace, "player"),

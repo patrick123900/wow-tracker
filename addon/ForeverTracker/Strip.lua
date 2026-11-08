@@ -115,7 +115,7 @@ end
 local function identity()
 	local s = FT.current
 	if not s then return nil end
-	return { name = s.name, realm = s.realm, faction = s.faction, race = s.race, class = s.class,
+	return { name = s.name, surname = s.surname, realm = s.realm, faction = s.faction, race = s.race, class = s.class,
 		classToken = s.classToken, sex = s.sex, guild = s.guild, maxLevel = s.maxLevel,
 		guid = FT.Read(nil, UnitGUID, "player") }
 end

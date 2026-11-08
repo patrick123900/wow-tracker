@@ -469,7 +469,8 @@ class Companion:
             if self.combat_log.vitals:
                 payload["vitals"] = self.combat_log.vitals
             payload["enemy"] = self.enemy(flags)
-            surname = self.combat_log.surname(self.identity.get("guid"))
+            # The addon sends the last name; older addon versions didn't.
+            surname = not self.identity.get("surname") and self.combat_log.surname(self.identity.get("guid"))
             if surname:
                 payload["identity"] = {**self.identity, "surname": surname}
         if self.quests_dirty:

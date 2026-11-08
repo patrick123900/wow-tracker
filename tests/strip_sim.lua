@@ -74,7 +74,7 @@ function UnitGUID() return simGUID end
 function UnitLevel() return S.level end
 function GetMaxPlayerLevel() return 60 end
 function GetGuildInfo() return nil end
-function UnitName() return simName end
+function UnitName() return simName, "Heals" end
 function GetRealmName() return simRealm end
 function UnitFactionGroup() return "Alliance" end
 function UnitSex() return 2 end
