@@ -389,9 +389,7 @@ class Store:
         history = False
         with self.lock, self.conn:
             if kind == "presence":
-                presence = self.get("presence") or {}
-                self.put("presence", {"online": bool(payload.get("online")), "t": now,
-                                      "character": presence.get("character")})
+                self.set_presence(bool(payload.get("online")), now)
             elif kind == "live":
                 char = self.payload_character(payload)
                 if not char:
@@ -413,10 +411,14 @@ class Store:
                 live = now - (self.cget(char, "liveAt") or 0) < LIVE_STALE
                 if not live:
                     self.cput(char, "snapshot", snap)
-                    self.cput(char, "updatedAt", now)
+                    # "Seen": when the game wrote the file (or the snapshot was
+                    # taken), not when it arrived; re-reading an old file
+                    # mustn't make the character look recently active.
+                    seen = _int(payload.get("savedAt")) or _int(snap.get("t")) or now
+                    self.cput(char, "updatedAt", max(self.cget(char, "updatedAt") or 0, min(seen, now)))
                     self.put("current", char)
                     online = snap.get("status") == "online" and payload.get("gameRunning") is not False
-                    self.put("presence", {"online": online, "t": now, "character": char})
+                    self.set_presence(online, now, char)
                     if payload.get("quests") is not None:
                         self.cput(char, "quests", {"t": now, "list": clean_quests(payload["quests"])})
                     self.put_sheet(char, payload, now)
@@ -434,6 +436,14 @@ class Store:
             else:
                 raise ValueError(f"unknown kind {kind!r}")
         self.notify(history)
+
+    def set_presence(self, online, now, char=None):
+        """Online/offline. Its time is when the character was last seen, so a
+        repeated "offline" (e.g. while appearing offline) keeps the old one."""
+        old = self.get("presence") or {"online": False, "t": 0}
+        if not online and not self.online(old, now):
+            return
+        self.put("presence", {"online": online, "t": now, "character": char or old.get("character")})
 
     def put_sheet(self, char, payload, now):
         """Stores gear and professions; returns whether either changed."""

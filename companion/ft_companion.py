@@ -327,6 +327,7 @@ class Companion:
         return {
             "kind": "snapshot",
             "character": key,
+            "savedAt": self.db.get("savedAt"),  # when the game wrote the file
             "gameRunning": running,
             "snapshot": snap,
             "events": char.get("events") or [],
